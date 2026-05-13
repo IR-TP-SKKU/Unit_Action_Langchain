@@ -15,9 +15,10 @@ natural language command
 -> primitive action JSON
 ```
 
-It outputs robot-level primitive action JSON. It does **not** compute robot
-motion, joint angles, IK, FK, Jacobians, Isaac Sim commands, trajectories,
-trajectory samples, or fake robot execution results.
+It outputs robot-level primitive action JSON. It does **not** execute robot
+motion or compute IK, FK, Jacobians, joint angles, joint commands, torque
+commands, Isaac Sim execution, trajectories, trajectory samples, or fake robot
+execution results.
 
 This module outputs primitive action JSON only; it does not compute IK, Jacobians, joint commands, FK, or Isaac Sim execution.
 
@@ -36,6 +37,8 @@ There are two planning paths:
 - **Template baseline**: the old ParsedGoal/template compiler. It is kept for
   baseline comparisons, fallback behavior, tests, and simple demos. It extracts
   shape parameters and deterministic Python code creates the template strokes.
+- **`--no-api` demo fallback**: deterministic local parsing for development and
+  tests only. It does not exercise production agentic LLM tool planning.
 
 Open-ended shapes such as a house, smiley face, or star approximation are
 examples for the agentic LLM planner. They are **not** hard-coded as deterministic
@@ -109,9 +112,25 @@ For example, a "house" can be decomposed by the LLM into:
 That decomposition is represented as Unit Action tool calls. It is not a
 deterministic compiler template in `geometry.py`.
 
+## Agentic Tool Validation
+
+Agentic mode still outputs primitive JSON only. The Unit Action tools validate
+symbolic planner state before a primitive action is appended:
+
+- Out-of-board `move_to_start`, `draw_line_to`, and `draw_arc` calls are rejected.
+- `finish_plan` requires `pen_state == "up"`; the LLM must call `pen_up` first.
+- `draw_arc` requires `current_position` to match the arc start point before the
+  arc action is accepted.
+
+These checks are planner-level JSON validation only. They do not execute robot
+motion and do not compute IK, FK, Jacobians, joint commands, torque commands, or
+Isaac Sim execution.
+
 ## Output Schema
 
-Shortened output example:
+Shortened representative agentic output example. The exact geometry depends on
+the LLM tool calls; agentic `goal.shape_type` is `custom` because agentic mode
+does not use the deterministic ParsedGoal template compiler:
 
 ```json
 {
@@ -120,7 +139,7 @@ Shortened output example:
   "goal": {
     "shape_type": "custom",
     "center": {"x": 0.0, "y": 0.0, "unit": "m"},
-    "radius_m": 0.05,
+    "radius_m": null,
     "side_length_m": null,
     "size_m": 0.1,
     "orientation_rad": 0.0,
@@ -129,9 +148,7 @@ Shortened output example:
     "assumptions": [
       "Agentic mode does not use deterministic ParsedGoal templates."
     ],
-    "warnings": [
-      "robot reachability and IK feasibility are not checked by the LangChain planner"
-    ]
+    "warnings": []
   },
   "strokes": [
     {
@@ -185,6 +202,7 @@ trajectory samples, or Isaac Sim commands.
 
 - Board frame coordinates are in meters.
 - Board frame origin is at the board center.
+- Action params use 3D board-frame targets with `z` metadata where applicable.
 - The kinematics module must convert board frame coordinates to robot base frame.
 - The kinematics module must handle the pen tip offset from the end-effector.
 - The kinematics module must interpolate Cartesian waypoints for line and arc actions.
