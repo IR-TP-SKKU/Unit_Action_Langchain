@@ -49,6 +49,21 @@ def test_cli_no_api_out_only_suppresses_stdout(tmp_path, capsys):
     assert payload["goal"]["shape_type"] == "triangle"
 
 
+def test_cli_no_api_korean_letter_a(tmp_path, capsys):
+    output = tmp_path / "letter_A.json"
+    result = cli.main(
+        ["중앙에 크기 10cm인 글자 A를 써줘", "--no-api", "--out", str(output), "--out-only"]
+    )
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert captured.out == ""
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["goal"]["shape_type"] == "letter"
+    assert payload["goal"]["letter"] == "A"
+    assert payload["actions"]
+
+
 def test_cli_default_mode_missing_live_key_is_nonzero_and_no_secret(monkeypatch, capsys):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     result = cli.main(["Draw a circle with radius 5 cm"])
@@ -58,4 +73,3 @@ def test_cli_default_mode_missing_live_key_is_nonzero_and_no_secret(monkeypatch,
     assert "OPENAI_API_KEY is not set" in captured.err
     assert "sk-" not in captured.err
     assert captured.out == ""
-

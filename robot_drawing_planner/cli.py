@@ -124,7 +124,7 @@ def _infer_shape_type(command: str) -> str:
 
 
 def _extract_letter(command: str) -> str:
-    match = re.search(r"\b([AHLTO])\b", command.upper())
+    match = re.search(r"(?<![A-Z])([AHLTO])(?![A-Z])", command.upper())
     if match:
         return match.group(1)
     for letter in ["A", "H", "L", "T", "O"]:
