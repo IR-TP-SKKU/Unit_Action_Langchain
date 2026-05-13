@@ -1,0 +1,107 @@
+{
+  "schema_version": "1.0",
+  "coordinate_frame": "drawing_board_2d_m",
+  "board": {
+    "width_m": 0.4,
+    "height_m": 0.3,
+    "origin": "center"
+  },
+  "goal": {
+    "kind": "letter",
+    "letter": "A",
+    "size_m": 0.1,
+    "center": {
+      "x_m": 0.0,
+      "y_m": 0.0
+    }
+  },
+  "actions": [
+    {
+      "action": "move_to_start",
+      "target": {
+        "x_m": -0.03,
+        "y_m": -0.05
+      }
+    },
+    {
+      "action": "align_pen_orientation",
+      "orientation": "board_normal"
+    },
+    {
+      "action": "pen_down",
+      "contact": "drawing_board"
+    },
+    {
+      "action": "draw_line",
+      "start": {
+        "x_m": -0.03,
+        "y_m": -0.05
+      },
+      "end": {
+        "x_m": 0.0,
+        "y_m": 0.05
+      }
+    },
+    {
+      "action": "pen_up"
+    },
+    {
+      "action": "move_to_start",
+      "target": {
+        "x_m": 0.0,
+        "y_m": 0.05
+      }
+    },
+    {
+      "action": "align_pen_orientation",
+      "orientation": "board_normal"
+    },
+    {
+      "action": "pen_down",
+      "contact": "drawing_board"
+    },
+    {
+      "action": "draw_line",
+      "start": {
+        "x_m": 0.0,
+        "y_m": 0.05
+      },
+      "end": {
+        "x_m": 0.03,
+        "y_m": -0.05
+      }
+    },
+    {
+      "action": "pen_up"
+    },
+    {
+      "action": "move_to_start",
+      "target": {
+        "x_m": -0.012,
+        "y_m": 0.0
+      }
+    },
+    {
+      "action": "align_pen_orientation",
+      "orientation": "board_normal"
+    },
+    {
+      "action": "pen_down",
+      "contact": "drawing_board"
+    },
+    {
+      "action": "draw_line",
+      "start": {
+        "x_m": -0.012,
+        "y_m": 0.0
+      },
+      "end": {
+        "x_m": 0.012,
+        "y_m": 0.0
+      }
+    },
+    {
+      "action": "pen_up"
+    }
+  ]
+}
