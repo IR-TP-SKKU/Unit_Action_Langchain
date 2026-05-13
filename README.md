@@ -4,18 +4,42 @@ LangChain / LLM planner for **LLM-Assisted Robot Shape Drawing in Isaac Sim**.
 
 ## Project Scope
 
-This package implements only the LangChain/LLM planner layer:
+This package implements only the LangChain/LLM planner layer. The project
+contribution is the **agentic planner over robot primitive actions**:
 
 ```text
-natural language command -> ParsedGoal -> deterministic strokes -> primitive action JSON
+natural language command
+-> ChatOpenAI bound to Unit Action tools
+-> multi-step tool calls
+-> PlanBuilder state
+-> primitive action JSON
 ```
 
 It outputs robot-level primitive action JSON. It does **not** compute robot
-motion, joint angles, IK, FK, Jacobians, Isaac Sim commands, trajectories, or
-fake robot execution results.
+motion, joint angles, IK, FK, Jacobians, Isaac Sim commands, trajectories,
+trajectory samples, or fake robot execution results.
+
+This module outputs primitive action JSON only; it does not compute IK, Jacobians, joint commands, FK, or Isaac Sim execution.
 
 The downstream robot/kinematics module owns frame transforms, trajectory
 sampling, IK/Jacobian control, and Isaac Sim execution.
+
+## Planner Modes
+
+There are two planning paths:
+
+- **Agentic LLM planner**: the production/default mode. The LLM is bound to
+  Unit Action tools such as `move_to_start`, `pen_down`, `draw_line_to`,
+  `draw_arc`, `check_plan`, and `finish_plan`. The LLM must call these tools
+  step by step, and each call appends one symbolic primitive action to
+  `PlanBuilder`.
+- **Template baseline**: the old ParsedGoal/template compiler. It is kept for
+  baseline comparisons, fallback behavior, tests, and simple demos. It extracts
+  shape parameters and deterministic Python code creates the template strokes.
+
+Open-ended shapes such as a house, smiley face, or star approximation are
+examples for the agentic LLM planner. They are **not** hard-coded as deterministic
+geometry templates.
 
 ## Installation
 
@@ -45,10 +69,16 @@ zsh -ic 'robot-drawing-plan "Draw a circle with radius 5 cm" --pretty'
 
 ## CLI Examples
 
-Live LangChain/OpenAI mode:
+Live LangChain/OpenAI agentic Unit Action tool mode:
 
 ```bash
 zsh -ic 'robot-drawing-plan "중앙에 반지름 5cm짜리 원을 그려줘" --pretty --out outputs/circle_plan.json'
+```
+
+Template baseline mode:
+
+```bash
+zsh -ic 'robot-drawing-plan "Draw a circle with radius 5 cm" --mode template --pretty'
 ```
 
 Development/demo mode without OpenAI:
@@ -59,6 +89,26 @@ python -m robot_drawing_planner.cli "중앙에 한 변 10cm짜리 네모를 그�
 
 Use `--out-only` to write only to a file without printing JSON to stdout.
 
+## Open-Ended Agentic Examples
+
+Prompt/tool-call examples are stored in `examples/agentic_tool_calls/`:
+
+- `square_tool_plan.json`
+- `circle_tool_plan.json`
+- `letter_A_tool_plan.json`
+- `house_tool_plan.json`
+- `smiley_tool_plan.json`
+- `star_approx_tool_plan.json`
+
+For example, a "house" can be decomposed by the LLM into:
+
+- body: a square-like closed line contour
+- roof: a triangle-like line contour
+- door: a smaller line contour on the body
+
+That decomposition is represented as Unit Action tool calls. It is not a
+deterministic compiler template in `geometry.py`.
+
 ## Output Schema
 
 Shortened output example:
@@ -68,7 +118,7 @@ Shortened output example:
   "schema_version": "1.0",
   "source_command": "Draw a circle with radius 5 cm",
   "goal": {
-    "shape_type": "circle",
+    "shape_type": "custom",
     "center": {"x": 0.0, "y": 0.0, "unit": "m"},
     "radius_m": 0.05,
     "side_length_m": null,
@@ -76,7 +126,9 @@ Shortened output example:
     "orientation_rad": 0.0,
     "letter": null,
     "frame": "board",
-    "assumptions": [],
+    "assumptions": [
+      "Agentic mode does not use deterministic ParsedGoal templates."
+    ],
     "warnings": [
       "robot reachability and IK feasibility are not checked by the LangChain planner"
     ]
@@ -110,7 +162,8 @@ Shortened output example:
     "warnings": [],
     "errors": [],
     "requires_robot_feasibility_check": true,
-    "note": "This planner does not compute IK, joint angles, Jacobians, or Isaac Sim commands."
+    "mode": "agentic_unit_action_tools",
+    "note": "This agentic planner outputs primitive action JSON only; it does not compute IK, FK, Jacobians, joint commands, trajectory samples, or Isaac Sim commands."
   }
 }
 ```
@@ -125,7 +178,8 @@ Primitive action names are:
 - `pen_up`: lift the pen after a stroke or contour.
 
 `params` contains only planner-level geometric parameters and hints. It does not
-contain IK solutions, joint commands, robot trajectories, or Isaac Sim commands.
+contain IK solutions, FK results, Jacobians, joint commands, robot trajectories,
+trajectory samples, or Isaac Sim commands.
 
 ## Handoff To Kinematics Teammate
 
@@ -159,4 +213,3 @@ Run through zsh when `OPENAI_API_KEY` is exported in `~/.zshrc`:
 ```bash
 zsh -ic 'robot-drawing-plan "중앙에 반지름 5cm짜리 원을 그려줘" --pretty'
 ```
-
