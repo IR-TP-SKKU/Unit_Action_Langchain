@@ -250,7 +250,8 @@ class UnitActionToolset:
         ok = not new_errors and not builder.errors and builder.finished
         message = "Plan finished." if ok else (new_errors[-1] if new_errors else builder.errors[-1])
         feedback = self._feedback(ok, message, visible_errors=new_errors or None)
-        feedback["plan"] = self._plan_payload()
+        if ok:
+            feedback["plan"] = self._plan_payload()
         return feedback
 
     def tool_by_name(self, name: str) -> StructuredTool:

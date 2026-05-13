@@ -93,15 +93,7 @@ def plan_drawing_agentic(
                         extra_errors=[],
                         extra_warnings=[],
                     )
-                return _drawing_plan_from_toolset(
-                    command=command,
-                    toolset=toolset,
-                    config=planner_config,
-                    validation_ok=False,
-                    extra_errors=[feedback.get("message", "finish_plan failed")],
-                    extra_warnings=list(feedback.get("warnings") or []),
-                    force_empty_actions=True,
-                )
+                errors = [feedback.get("message", "finish_plan failed")]
 
     errors.append(f"Agentic planning failed: max_steps {max_steps} exceeded.")
     if last_finish_feedback and last_finish_feedback.get("message"):

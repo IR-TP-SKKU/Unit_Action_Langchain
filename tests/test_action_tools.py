@@ -2,6 +2,10 @@ import json
 
 from robot_drawing_planner.action_tools import UnitActionToolset, create_unit_action_tools
 
+FINISH_WITH_PEN_DOWN_MESSAGE = (
+    "finish_plan requires pen_state == 'up'; call pen_up before finish_plan."
+)
+
 
 def invoke(toolset: UnitActionToolset, name: str, payload: dict | None = None):
     return toolset.tool_by_name(name).invoke(payload or {})
@@ -81,6 +85,25 @@ def test_finish_plan_requires_check_plan_before_finish():
 
     assert feedback["ok"] is False
     assert "requires check_plan" in feedback["message"]
+
+
+def test_finish_plan_with_pen_down_returns_false_without_plan_payload():
+    toolset = UnitActionToolset()
+    invoke(toolset, "begin_plan", {"source_command": "unsafe finish"})
+    invoke(toolset, "move_to_start", {"x": 0.0, "y": 0.0})
+    invoke(toolset, "pen_down")
+    invoke(toolset, "draw_line_to", {"x": 0.05, "y": 0.0})
+    invoke(toolset, "check_plan")
+
+    feedback = invoke(toolset, "finish_plan")
+
+    assert feedback["ok"] is False
+    assert feedback["message"] == FINISH_WITH_PEN_DOWN_MESSAGE
+    assert feedback["pen_state"] == "down"
+    assert feedback["errors"] == [FINISH_WITH_PEN_DOWN_MESSAGE]
+    assert "plan" not in feedback
+    assert toolset.builder is not None
+    assert toolset.builder.finished is False
 
 
 def test_invalid_pen_state_returns_ok_false():

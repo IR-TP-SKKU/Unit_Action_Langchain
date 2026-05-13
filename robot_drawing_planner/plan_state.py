@@ -241,7 +241,9 @@ class PlanBuilder:
                 "finish_plan requires at least one drawable stroke."
             )
         if self.pen_state == "down":
-            self.warnings.append("finish_plan called while pen is still down.")
+            return self._record_failed_call(
+                "finish_plan requires pen_state == 'up'; call pen_up before finish_plan."
+            )
         self.finished = True
         return self.check_plan()
 

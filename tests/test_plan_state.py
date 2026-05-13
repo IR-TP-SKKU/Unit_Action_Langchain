@@ -14,6 +14,10 @@ ALLOWED_PRIMITIVES = {
     "pen_up",
 }
 
+FINISH_WITH_PEN_DOWN_MESSAGE = (
+    "finish_plan requires pen_state == 'up'; call pen_up before finish_plan."
+)
+
 
 def build_square_plan(config: PlannerConfig | None = None) -> PlanBuilder:
     builder = PlanBuilder.begin_plan(
@@ -83,6 +87,20 @@ def test_finish_plan_without_strokes_fails():
     assert "finish_plan requires at least one drawable stroke." in summary["failed_calls"]
     assert summary["errors"] == []
     assert builder.actions == []
+
+
+def test_finish_plan_with_pen_down_fails_without_marking_finished():
+    builder = PlanBuilder.begin_plan("unsafe finish")
+    builder.move_to_start(0.0, 0.0)
+    builder.pen_down()
+    builder.draw_line_to(0.05, 0.0)
+
+    summary = builder.finish_plan()
+
+    assert summary["finished"] is False
+    assert summary["pen_state"] == "down"
+    assert FINISH_WITH_PEN_DOWN_MESSAGE in summary["failed_calls"]
+    assert summary["errors"] == []
 
 
 def test_pen_up_after_drawing_succeeds():

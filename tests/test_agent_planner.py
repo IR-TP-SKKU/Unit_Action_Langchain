@@ -6,6 +6,10 @@ from robot_drawing_planner.agent_planner import plan_drawing_agentic
 from robot_drawing_planner.planner import plan_from_goal
 from robot_drawing_planner.schemas import Measurement, ParsedGoal
 
+FINISH_WITH_PEN_DOWN_MESSAGE = (
+    "finish_plan requires pen_state == 'up'; call pen_up before finish_plan."
+)
+
 
 class FakeToolCallingLLM:
     def __init__(self, tool_call_batches):
@@ -284,6 +288,63 @@ def test_fake_llm_repairs_out_of_board_line_after_feedback():
         for message in call_messages
         if hasattr(message, "content")
     )
+
+
+def test_fake_llm_repairs_finish_plan_with_pen_down_after_feedback():
+    llm = FakeToolCallingLLM(
+        [
+            [tc("begin_plan", {"source_command": "repair unsafe finish"})],
+            [tc("move_to_start", {"x": 0.0, "y": 0.0})],
+            [tc("align_pen_orientation")],
+            [tc("pen_down")],
+            [tc("draw_line_to", {"x": 0.05, "y": 0.0})],
+            [tc("check_plan")],
+            [tc("finish_plan")],
+            [tc("pen_up")],
+            [tc("check_plan")],
+            [tc("finish_plan")],
+        ]
+    )
+
+    plan = plan_drawing_agentic("repair unsafe finish", llm=llm)
+
+    assert plan.diagnostics["validation_ok"] is True
+    assert plan.diagnostics["errors"] == []
+    assert FINISH_WITH_PEN_DOWN_MESSAGE in plan.diagnostics["failed_calls"]
+    assert [action.name for action in plan.actions] == [
+        "move_to_start",
+        "align_pen_orientation",
+        "pen_down",
+        "draw_line",
+        "pen_up",
+    ]
+    assert any(
+        FINISH_WITH_PEN_DOWN_MESSAGE in message.content
+        for call_messages in llm.calls
+        for message in call_messages
+        if hasattr(message, "content")
+    )
+
+
+def test_unrepaired_finish_plan_with_pen_down_exceeds_max_steps_with_empty_actions():
+    llm = FakeToolCallingLLM(
+        [
+            [tc("begin_plan", {"source_command": "never repair unsafe finish"})],
+            [tc("move_to_start", {"x": 0.0, "y": 0.0})],
+            [tc("pen_down")],
+            [tc("draw_line_to", {"x": 0.05, "y": 0.0})],
+            [tc("check_plan")],
+            [tc("finish_plan")],
+        ]
+    )
+
+    plan = plan_drawing_agentic("never repair unsafe finish", llm=llm, max_steps=6)
+
+    assert plan.actions == []
+    assert plan.diagnostics["validation_ok"] is False
+    assert FINISH_WITH_PEN_DOWN_MESSAGE in plan.diagnostics["errors"]
+    assert any("max_steps 6 exceeded" in error for error in plan.diagnostics["errors"])
+    assert FINISH_WITH_PEN_DOWN_MESSAGE in plan.diagnostics["failed_calls"]
 
 
 def test_unrepaired_out_of_board_attempt_exceeds_max_steps_with_empty_actions():
