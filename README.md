@@ -44,7 +44,14 @@ If `OPENAI_MODEL` is omitted, the default is `gpt-5-nano`.
 Use `zsh -ic` for live API calls so `~/.zshrc` can load the key:
 
 ```bash
-zsh -ic 'robot-drawing-plan "draw a 10 cm square at the center" -o plan.json'
+zsh -ic 'robot-drawing-plan "draw a 10 cm square at the center" --out plan.json'
+```
+
+For development and tests, `--no-api` uses a small deterministic demo parser and
+does not call OpenAI:
+
+```bash
+python -m robot_drawing_planner.cli "Draw a circle with radius 5 cm" --no-api --out outputs/circle.json --pretty
 ```
 
 The CLI writes a JSON plan and does not execute the robot.
