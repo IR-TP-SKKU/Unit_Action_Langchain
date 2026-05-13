@@ -92,6 +92,42 @@ python -m robot_drawing_planner.cli "중앙에 한 변 10cm짜리 네모를 그�
 
 Use `--out-only` to write only to a file without printing JSON to stdout.
 
+## Visualizing An LLM-Generated Plan
+
+Use the Matplotlib plotter to preview the planned board-frame drawing path
+before robot execution. This is useful for debugging whether the LLM planned
+sensible coordinates and for checking whether the planned path sits inside the
+known board boundary.
+
+Generate a plan:
+
+```bash
+python -m robot_drawing_planner.cli "중앙에 한 변 10cm짜리 네모를 그려줘" --no-api --pretty --out outputs/square_plan.json --out-only
+```
+
+Plot the plan:
+
+```bash
+python -m robot_drawing_planner.plot_cli outputs/square_plan.json --out outputs/square_plan.png
+```
+
+Or use the console script:
+
+```bash
+robot-drawing-plot outputs/square_plan.json --out outputs/square_plan.png
+```
+
+Solid strokes represent pen-down drawing paths. Optional pen-up moves are
+free-space moves and are not actual drawing. Coordinates are board-frame meters.
+The visualizer does not compute IK, Jacobians, joint commands, or Isaac Sim
+execution.
+
+This plot is the planned target path only. Later, an Isaac Sim actual
+end-effector trace can be overlaid as a separate feature when real execution
+trace data exists.
+
+The plotter visualizes the planned primitive path only; it does not validate robot reachability or simulate execution.
+
 ## Open-Ended Agentic Examples
 
 Prompt/tool-call examples are stored in `examples/agentic_tool_calls/`:

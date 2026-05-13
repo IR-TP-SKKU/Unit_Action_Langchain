@@ -50,6 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", help="Optional JSON PlannerConfig file.")
     parser.add_argument(
+        "--plot-out",
+        help="Optional path where a planned-path plot image will be written.",
+    )
+    parser.add_argument(
         "--out-only",
         action="store_true",
         help="Write JSON to --out without printing it to stdout.",
@@ -80,6 +84,13 @@ def main(argv: list[str] | None = None) -> int:
             output_path = Path(args.out)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(json_text + "\n", encoding="utf-8")
+        if args.plot_out:
+            import matplotlib
+
+            matplotlib.use("Agg", force=True)
+            from robot_drawing_planner.visualization import save_plan_plot
+
+            save_plan_plot(plan, args.plot_out, config=config)
         if not args.out_only:
             print(json_text)
         return 0

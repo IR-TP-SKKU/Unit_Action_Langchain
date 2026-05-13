@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -99,6 +101,36 @@ def test_cli_no_api_korean_letter_a(tmp_path, capsys):
     assert payload["goal"]["shape_type"] == "letter"
     assert payload["goal"]["letter"] == "A"
     assert payload["actions"]
+
+
+def test_cli_no_api_plot_out_writes_plan_and_png(tmp_path):
+    plan_path = tmp_path / "plan.json"
+    plot_path = tmp_path / "plan.png"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "robot_drawing_planner.cli",
+            "중앙에 한 변 10cm짜리 네모를 그려줘",
+            "--no-api",
+            "--out",
+            str(plan_path),
+            "--plot-out",
+            str(plot_path),
+            "--out-only",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert plan_path.exists()
+    assert plot_path.exists()
+    assert plot_path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 def test_cli_mode_template_with_no_api_still_uses_demo_fallback(capsys):
