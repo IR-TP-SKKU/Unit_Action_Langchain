@@ -142,3 +142,62 @@ def test_agentic_events_do_not_contain_openai_api_key_label():
         ensure_ascii=False,
     )
     assert "OPENAI_API_KEY" not in payload
+
+
+def test_agentic_error_event_metadata_includes_budget_values():
+    result = plan_drawing_agentic(
+        "never finish",
+        llm=FakeToolCallingLLM([[tc("begin_plan", {"source_command": "never finish"})]]),
+        max_llm_steps=1,
+        max_tool_calls=5,
+        collect_events=True,
+    )
+
+    error_events = [event for event in result.events if event.event_type == "error"]
+
+    assert error_events
+    metadata = error_events[-1].metadata
+    assert metadata["max_llm_steps"] == 1
+    assert metadata["max_tool_calls"] == 5
+    assert metadata["llm_step_count"] == 1
+    assert metadata["tool_call_count"] == 1
+
+
+def test_agentic_auto_finalize_events_include_auto_finish_plan():
+    result = plan_drawing_agentic(
+        "short line",
+        llm=FakeToolCallingLLM(
+            [
+                [
+                    tc("begin_plan", {"source_command": "short line"}),
+                    tc("move_to_start", {"x": 0.0, "y": 0.0}),
+                    tc("pen_down"),
+                    tc("draw_line_to", {"x": 0.05, "y": 0.0}),
+                    tc("pen_up"),
+                ],
+            ]
+        ),
+        max_llm_steps=1,
+        collect_events=True,
+    )
+
+    auto_finish_calls = [
+        event
+        for event in result.events
+        if event.event_type == "tool_call"
+        and event.tool_name == "finish_plan"
+        and event.metadata.get("auto") is True
+    ]
+    plan_finished_events = [
+        event for event in result.events if event.event_type == "plan_finished"
+    ]
+
+    assert result.plan.diagnostics["validation_ok"] is True
+    assert auto_finish_calls
+    assert plan_finished_events[-1].metadata["auto_finalized"] is True
+    assert any(
+        event.event_type == "tool_call"
+        and event.tool_name == "check_plan"
+        and event.metadata.get("auto") is True
+        for event in result.events
+    )

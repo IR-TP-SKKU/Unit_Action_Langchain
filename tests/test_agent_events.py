@@ -55,11 +55,13 @@ def test_agent_run_result_instantiates_with_minimal_drawing_plan():
         events=[event],
         plan_json_path="outputs/plan.json",
         plot_png_path="outputs/plan.png",
+        events_json_path="outputs/plan_events.json",
     )
 
     assert result.command == "draw a line"
     assert result.plan.diagnostics["validation_ok"] is True
     assert result.events == [event]
+    assert result.events_json_path == "outputs/plan_events.json"
 
 
 def test_event_to_chat_markdown_formats_tool_call():

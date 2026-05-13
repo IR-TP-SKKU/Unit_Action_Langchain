@@ -67,6 +67,10 @@ def test_agentic_prompt_contains_board_scale_sequence_and_arc_guidance():
     assert "Do not use pixel-like or arbitrary coordinates such as 1, 2, 3" in prompt
     assert "pen_up before finish_plan" in prompt
     assert "arc start point must match current pen position" in prompt
+    assert "multiple Unit Action tools in a single LLM response" in prompt
+    assert "Finish within the tool budget" in prompt
+    assert "check_plan, then finish_plan immediately" in prompt
+    assert "simple body rectangle, triangular roof, and optional door" in prompt
 
 
 def test_agentic_prompt_uses_actual_configured_board_range():
@@ -445,7 +449,7 @@ def test_unrepaired_finish_plan_with_pen_down_exceeds_max_steps_with_empty_actio
     assert plan.actions == []
     assert plan.diagnostics["validation_ok"] is False
     assert FINISH_WITH_PEN_DOWN_MESSAGE in plan.diagnostics["errors"]
-    assert any("max_steps 6 exceeded" in error for error in plan.diagnostics["errors"])
+    assert any("max_llm_steps 6 exceeded" in error for error in plan.diagnostics["errors"])
     assert FINISH_WITH_PEN_DOWN_MESSAGE in plan.diagnostics["failed_calls"]
 
 
@@ -465,7 +469,7 @@ def test_unrepaired_out_of_board_attempt_exceeds_max_steps_with_empty_actions():
     assert plan.actions == []
     assert plan.strokes == []
     assert plan.diagnostics["validation_ok"] is False
-    assert any("max_steps 5 exceeded" in error for error in plan.diagnostics["errors"])
+    assert any("max_llm_steps 5 exceeded" in error for error in plan.diagnostics["errors"])
     assert any("outside the board bounds" in call for call in plan.diagnostics["failed_calls"])
 
 
@@ -476,7 +480,149 @@ def test_max_steps_failure_returns_diagnostics_error():
 
     assert plan.actions == []
     assert plan.diagnostics["validation_ok"] is False
-    assert any("max_steps 2 exceeded" in error for error in plan.diagnostics["errors"])
+    assert any("max_llm_steps 2 exceeded" in error for error in plan.diagnostics["errors"])
+
+
+def test_default_budget_diagnostics_are_recorded():
+    plan = plan_drawing_agentic(
+        "draw a square",
+        llm=FakeToolCallingLLM(square_batches()),
+    )
+
+    assert plan.diagnostics["validation_ok"] is True
+    assert plan.diagnostics["max_llm_steps"] == 80
+    assert plan.diagnostics["max_tool_calls"] == 200
+    assert plan.diagnostics["llm_step_count"] == 11
+    assert plan.diagnostics["tool_call_count"] == 11
+
+
+def test_max_steps_argument_still_limits_llm_loop_for_compatibility():
+    llm = FakeToolCallingLLM([[tc("begin_plan", {"source_command": "never finish"})]])
+
+    plan = plan_drawing_agentic("never finish", llm=llm, max_steps=2)
+
+    assert plan.diagnostics["validation_ok"] is False
+    assert plan.diagnostics["max_llm_steps"] == 2
+    assert plan.diagnostics["llm_step_count"] == 2
+    assert any("max_llm_steps 2 exceeded" in error for error in plan.diagnostics["errors"])
+
+
+def test_max_tool_calls_stops_execution_even_with_llm_budget_remaining():
+    llm = FakeToolCallingLLM(
+        [
+            [
+                tc("begin_plan", {"source_command": "too many tools"}),
+                tc("move_to_start", {"x": 0.0, "y": 0.0}),
+                tc("pen_down"),
+                tc("draw_line_to", {"x": 0.05, "y": 0.0}),
+            ],
+        ]
+    )
+
+    plan = plan_drawing_agentic(
+        "too many tools",
+        llm=llm,
+        max_llm_steps=10,
+        max_tool_calls=3,
+    )
+
+    assert plan.actions == []
+    assert plan.diagnostics["validation_ok"] is False
+    assert plan.diagnostics["max_llm_steps"] == 10
+    assert plan.diagnostics["max_tool_calls"] == 3
+    assert plan.diagnostics["llm_step_count"] == 1
+    assert plan.diagnostics["tool_call_count"] == 3
+    assert any("max_tool_calls 3 exceeded" in error for error in plan.diagnostics["errors"])
+
+
+def test_auto_finalize_valid_pen_up_plan_after_llm_budget():
+    llm = FakeToolCallingLLM(
+        [
+            [
+                tc("begin_plan", {"source_command": "short line"}),
+                tc("move_to_start", {"x": 0.0, "y": 0.0}),
+                tc("align_pen_orientation"),
+                tc("pen_down"),
+                tc("draw_line_to", {"x": 0.05, "y": 0.0}),
+                tc("pen_up"),
+            ],
+        ]
+    )
+
+    plan = plan_drawing_agentic("short line", llm=llm, max_llm_steps=1)
+
+    assert plan.diagnostics["validation_ok"] is True
+    assert plan.actions
+    assert len(plan.strokes) == 1
+    assert any("auto-finalized" in warning for warning in plan.diagnostics["warnings"])
+    assert [action.name for action in plan.actions][-1] == "pen_up"
+
+
+def test_auto_finalize_can_be_disabled_for_valid_partial_plan():
+    llm = FakeToolCallingLLM(
+        [
+            [
+                tc("begin_plan", {"source_command": "short line"}),
+                tc("move_to_start", {"x": 0.0, "y": 0.0}),
+                tc("pen_down"),
+                tc("draw_line_to", {"x": 0.05, "y": 0.0}),
+                tc("pen_up"),
+            ],
+        ]
+    )
+
+    plan = plan_drawing_agentic(
+        "short line",
+        llm=llm,
+        max_llm_steps=1,
+        auto_finalize_if_valid=False,
+    )
+
+    assert plan.actions == []
+    assert plan.diagnostics["validation_ok"] is False
+    assert plan.diagnostics["partial_preview_available"] is True
+    assert plan.diagnostics["partial_stroke_count"] == 1
+    assert plan.diagnostics["partial_plan_is_not_executable"] is True
+
+
+def test_pen_state_down_cannot_auto_finalize():
+    llm = FakeToolCallingLLM(
+        [
+            [
+                tc("begin_plan", {"source_command": "unsafe line"}),
+                tc("move_to_start", {"x": 0.0, "y": 0.0}),
+                tc("pen_down"),
+                tc("draw_line_to", {"x": 0.05, "y": 0.0}),
+            ],
+        ]
+    )
+
+    plan = plan_drawing_agentic("unsafe line", llm=llm, max_llm_steps=1)
+
+    assert plan.actions == []
+    assert plan.diagnostics["validation_ok"] is False
+    assert plan.diagnostics["partial_preview_available"] is True
+    assert plan.diagnostics["partial_stroke_count"] == 1
+    assert plan.diagnostics["partial_plan_is_not_executable"] is True
+
+
+def test_no_strokes_cannot_auto_finalize():
+    llm = FakeToolCallingLLM(
+        [
+            [
+                tc("begin_plan", {"source_command": "no strokes"}),
+                tc("move_to_start", {"x": 0.0, "y": 0.0}),
+            ],
+        ]
+    )
+
+    plan = plan_drawing_agentic("no strokes", llm=llm, max_llm_steps=1)
+
+    assert plan.actions == []
+    assert plan.diagnostics["validation_ok"] is False
+    assert plan.diagnostics["partial_preview_available"] is False
+    assert plan.diagnostics["partial_stroke_count"] == 0
+    assert plan.diagnostics["partial_plan_is_not_executable"] is False
 
 
 def test_agentic_output_actions_come_from_tool_calls_not_template_compiler():

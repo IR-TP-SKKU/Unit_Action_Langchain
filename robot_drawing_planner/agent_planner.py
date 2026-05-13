@@ -26,6 +26,11 @@ You must not output a final plan directly.
 You must call tools step by step.
 Use only line and arc primitives.
 
+Tool-call batching:
+- You may call multiple Unit Action tools in a single LLM response when the order is clear.
+- Prefer batching consecutive actions such as move_to_start, align_pen_orientation, pen_down, draw_line_to..., pen_up.
+- Finish within the tool budget.
+
 Board frame convention:
 - origin is board center.
 - coordinates are meters.
@@ -54,6 +59,14 @@ Arc rules:
 
 Open-ended shapes:
 - For house/star/smiley/letters, approximate with multiple line/arc strokes inside the board.
+- For open-ended shapes, make a simple recognizable drawing, not a detailed illustration.
+- Use 3 to 12 drawable strokes for open-ended shapes unless the user asks for detail.
+- Do not keep adding decorative details after a recognizable shape is complete.
+- After the drawing is complete, call check_plan, then finish_plan immediately.
+- For a house, use a simple body rectangle, triangular roof, and optional door.
+- A simple house can be completed in about 10 to 18 unit-action tools.
+- For a smiley, use one face circle, two eye circles or dots, and one smile arc.
+- For a star, use a simple 5-point polyline approximation.
 
 The tools append symbolic robot primitive actions only. They do not move the robot.
 Do not compute IK, FK, Jacobians, joint commands, joint velocities, trajectory
@@ -78,16 +91,20 @@ PLANNER_SCOPE_NOTE = (
     "IK, FK, Jacobians, joint commands, trajectory samples, or Isaac Sim commands."
 )
 MAX_AGENTIC_TOOL_CALL_ROUNDS = 1000
-DEFAULT_AGENTIC_TOOL_CALL_ROUNDS = 100
+DEFAULT_AGENTIC_LLM_STEPS = 80
+DEFAULT_AGENTIC_TOOL_CALLS = 200
 
 
 def plan_drawing_agentic(
     command: str,
     config: PlannerConfig | None = None,
     llm: Any | None = None,
-    max_steps: int = DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
+    max_steps: int | None = None,
+    max_llm_steps: int | None = None,
+    max_tool_calls: int = DEFAULT_AGENTIC_TOOL_CALLS,
     event_callback: Callable[[AgentRunEvent], None] | None = None,
     collect_events: bool = False,
+    auto_finalize_if_valid: bool = True,
     plan_snapshot_callback: Callable[[DrawingPlan], None] | None = None,
 ) -> DrawingPlan | AgentRunResult:
     return _plan_drawing_agentic_impl(
@@ -95,8 +112,11 @@ def plan_drawing_agentic(
         config=config,
         llm=llm,
         max_steps=max_steps,
+        max_llm_steps=max_llm_steps,
+        max_tool_calls=max_tool_calls,
         event_callback=event_callback,
         collect_events=collect_events,
+        auto_finalize_if_valid=auto_finalize_if_valid,
         plan_snapshot_callback=plan_snapshot_callback,
     )
 
@@ -105,17 +125,19 @@ def _plan_drawing_agentic_impl(
     command: str,
     config: PlannerConfig | None = None,
     llm: Any | None = None,
-    max_steps: int = DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
+    max_steps: int | None = None,
+    max_llm_steps: int | None = None,
+    max_tool_calls: int = DEFAULT_AGENTIC_TOOL_CALLS,
     event_callback: Callable[[AgentRunEvent], None] | None = None,
     collect_events: bool = False,
+    auto_finalize_if_valid: bool = True,
     plan_snapshot_callback: Callable[[DrawingPlan], None] | None = None,
 ) -> DrawingPlan | AgentRunResult:
     """Plan by letting an LLM sequentially call symbolic unit-action tools."""
 
-    if max_steps < 1 or max_steps > MAX_AGENTIC_TOOL_CALL_ROUNDS:
-        raise ValueError(
-            f"max_steps must be between 1 and {MAX_AGENTIC_TOOL_CALL_ROUNDS}."
-        )
+    resolved_max_llm_steps = _resolve_max_llm_steps(max_steps, max_llm_steps)
+    _validate_budget("max_llm_steps", resolved_max_llm_steps)
+    _validate_budget("max_tool_calls", max_tool_calls)
 
     planner_config = config or DEFAULT_CONFIG
     toolset = UnitActionToolset(config=planner_config)
@@ -132,6 +154,8 @@ def _plan_drawing_agentic_impl(
     warnings: list[str] = []
     events: list[AgentRunEvent] = []
     should_emit_events = collect_events or event_callback is not None
+    llm_step_count = 0
+    tool_call_count = 0
 
     def emit(
         event_type: str,
@@ -166,6 +190,14 @@ def _plan_drawing_agentic_impl(
             return AgentRunResult(command=command, plan=plan, events=events)
         return plan
 
+    def budget_diagnostics() -> dict[str, int]:
+        return {
+            "max_llm_steps": resolved_max_llm_steps,
+            "max_tool_calls": max_tool_calls,
+            "llm_step_count": llm_step_count,
+            "tool_call_count": tool_call_count,
+        }
+
     def emit_plan_snapshot(validation_ok: bool = False) -> None:
         if plan_snapshot_callback is None:
             return
@@ -177,8 +209,40 @@ def _plan_drawing_agentic_impl(
                 validation_ok=validation_ok,
                 extra_errors=[],
                 extra_warnings=[],
+                budget_diagnostics=budget_diagnostics(),
             )
         )
+
+    def execute_tool_with_events(
+        name: str,
+        args: dict[str, Any],
+        step_index: int | None,
+        metadata: dict[str, Any] | None = None,
+        count_against_budget: bool = True,
+    ) -> dict[str, Any]:
+        nonlocal tool_call_count
+        emit(
+            "tool_call",
+            f"Calling unit-action tool '{name}'.",
+            step_index=step_index,
+            tool_name=name,
+            tool_args=args,
+            metadata=metadata,
+        )
+        feedback = _execute_tool_call(toolset, name, args)
+        if count_against_budget:
+            tool_call_count += 1
+        emit(
+            "tool_result",
+            str(feedback.get("message", "")),
+            step_index=step_index,
+            tool_name=name,
+            tool_result=_tool_result_event_payload(feedback),
+            ok=bool(feedback.get("ok", False)),
+            metadata=metadata,
+        )
+        emit_plan_snapshot(validation_ok=False)
+        return feedback
 
     emit(
         "user_request",
@@ -187,8 +251,9 @@ def _plan_drawing_agentic_impl(
         metadata={"mode": "agentic_unit_action_tools"},
     )
 
-    for _step in range(max_steps):
+    for _step in range(resolved_max_llm_steps):
         response = bound_model.invoke(messages)
+        llm_step_count += 1
         messages.append(response)
         tool_calls = _extract_tool_calls(response)
         emit(
@@ -210,26 +275,37 @@ def _plan_drawing_agentic_impl(
             continue
 
         for tool_call in tool_calls:
+            if tool_call_count >= max_tool_calls:
+                error_message = (
+                    f"Agentic planning failed: max_tool_calls {max_tool_calls} exceeded."
+                )
+                errors.append(error_message)
+                plan = _drawing_plan_from_toolset(
+                    command=command,
+                    toolset=toolset,
+                    config=planner_config,
+                    validation_ok=False,
+                    extra_errors=errors,
+                    extra_warnings=warnings,
+                    force_empty_actions=True,
+                    budget_diagnostics=budget_diagnostics(),
+                )
+                emit(
+                    "error",
+                    error_message,
+                    step_index=_step,
+                    ok=False,
+                    metadata=budget_diagnostics(),
+                )
+                return result(plan)
             name = tool_call["name"]
             args = tool_call.get("args") or {}
             tool_call_id = tool_call.get("id") or f"tool_call_{len(messages)}"
-            emit(
-                "tool_call",
-                f"Calling unit-action tool '{name}'.",
+            feedback = execute_tool_with_events(
+                name=name,
+                args=args,
                 step_index=_step,
-                tool_name=name,
-                tool_args=args,
             )
-            feedback = _execute_tool_call(toolset, name, args)
-            emit(
-                "tool_result",
-                str(feedback.get("message", "")),
-                step_index=_step,
-                tool_name=name,
-                tool_result=_tool_result_event_payload(feedback),
-                ok=bool(feedback.get("ok", False)),
-            )
-            emit_plan_snapshot(validation_ok=False)
             messages.append(
                 ToolMessage(
                     content=json.dumps(feedback, ensure_ascii=False),
@@ -248,6 +324,7 @@ def _plan_drawing_agentic_impl(
                         validation_ok=True,
                         extra_errors=[],
                         extra_warnings=[],
+                        budget_diagnostics=budget_diagnostics(),
                     )
                     emit(
                         "plan_finished",
@@ -257,6 +334,7 @@ def _plan_drawing_agentic_impl(
                         metadata={
                             "action_count": len(plan.actions),
                             "stroke_count": len(plan.strokes),
+                            **budget_diagnostics(),
                         },
                     )
                     if plan_snapshot_callback is not None:
@@ -264,7 +342,24 @@ def _plan_drawing_agentic_impl(
                     return result(plan)
                 errors = [feedback.get("message", "finish_plan failed")]
 
-    errors.append(f"Agentic planning failed: max_steps {max_steps} exceeded.")
+    if auto_finalize_if_valid:
+        finalized_plan = _try_auto_finalize_plan(
+            command=command,
+            toolset=toolset,
+            config=planner_config,
+            warnings=warnings,
+            budget_diagnostics=budget_diagnostics(),
+            execute_tool_with_events=execute_tool_with_events,
+            emit=emit,
+            step_index=llm_step_count,
+            plan_snapshot_callback=plan_snapshot_callback,
+        )
+        if finalized_plan is not None:
+            return result(finalized_plan)
+
+    errors.append(
+        f"Agentic planning failed: max_llm_steps {resolved_max_llm_steps} exceeded."
+    )
     if last_finish_feedback and last_finish_feedback.get("message"):
         warnings.append(f"Last finish_plan feedback: {last_finish_feedback['message']}")
     plan = _drawing_plan_from_toolset(
@@ -275,14 +370,115 @@ def _plan_drawing_agentic_impl(
         extra_errors=errors,
         extra_warnings=warnings,
         force_empty_actions=True,
+        budget_diagnostics=budget_diagnostics(),
+        partial_diagnostics=_partial_diagnostics(toolset),
     )
     emit(
         "error",
-        f"Agentic planning failed: max_steps {max_steps} exceeded.",
+        f"Agentic planning failed: max_llm_steps {resolved_max_llm_steps} exceeded.",
         ok=False,
-        metadata={"max_steps": max_steps},
+        metadata=budget_diagnostics(),
     )
     return result(plan)
+
+
+def _resolve_max_llm_steps(
+    max_steps: int | None,
+    max_llm_steps: int | None,
+) -> int:
+    if max_steps is not None:
+        return max_steps
+    if max_llm_steps is not None:
+        return max_llm_steps
+    return DEFAULT_AGENTIC_LLM_STEPS
+
+
+def _validate_budget(name: str, value: int) -> None:
+    if value < 1 or value > MAX_AGENTIC_TOOL_CALL_ROUNDS:
+        raise ValueError(f"{name} must be between 1 and {MAX_AGENTIC_TOOL_CALL_ROUNDS}.")
+
+
+def _try_auto_finalize_plan(
+    command: str,
+    toolset: UnitActionToolset,
+    config: PlannerConfig,
+    warnings: list[str],
+    budget_diagnostics: dict[str, int],
+    execute_tool_with_events: Callable[
+        [str, dict[str, Any], int | None, dict[str, Any] | None, bool],
+        dict[str, Any],
+    ],
+    emit: Callable[..., None],
+    step_index: int,
+    plan_snapshot_callback: Callable[[DrawingPlan], None] | None,
+) -> DrawingPlan | None:
+    builder = toolset.builder
+    if (
+        builder is None
+        or not builder.strokes
+        or builder.errors
+        or builder.pen_state != "up"
+    ):
+        return None
+
+    check_feedback = execute_tool_with_events(
+        "check_plan",
+        {},
+        step_index,
+        {"auto": True},
+        False,
+    )
+    if not check_feedback.get("ok"):
+        return None
+    finish_feedback = execute_tool_with_events(
+        "finish_plan",
+        {},
+        step_index,
+        {"auto": True},
+        False,
+    )
+    if not finish_feedback.get("ok"):
+        return None
+
+    auto_warning = (
+        "Plan was auto-finalized after the LLM reached its budget because the "
+        "symbolic plan was valid and pen_state was up."
+    )
+    auto_warnings = [*warnings, auto_warning]
+    plan = _drawing_plan_from_toolset(
+        command=command,
+        toolset=toolset,
+        config=config,
+        validation_ok=True,
+        extra_errors=[],
+        extra_warnings=auto_warnings,
+        budget_diagnostics=budget_diagnostics,
+    )
+    emit(
+        "plan_finished",
+        "finish_plan succeeded via auto-finalization.",
+        step_index=step_index,
+        ok=True,
+        metadata={
+            "auto_finalized": True,
+            "action_count": len(plan.actions),
+            "stroke_count": len(plan.strokes),
+            **budget_diagnostics,
+        },
+    )
+    if plan_snapshot_callback is not None:
+        plan_snapshot_callback(plan)
+    return plan
+
+
+def _partial_diagnostics(toolset: UnitActionToolset) -> dict[str, Any]:
+    builder = toolset.builder
+    stroke_count = len(builder.strokes) if builder is not None else 0
+    return {
+        "partial_preview_available": stroke_count > 0,
+        "partial_stroke_count": stroke_count,
+        "partial_plan_is_not_executable": stroke_count > 0,
+    }
 
 
 def _tool_result_event_payload(feedback: dict[str, Any]) -> dict[str, Any]:
@@ -379,6 +575,8 @@ def _drawing_plan_from_toolset(
     extra_errors: list[str],
     extra_warnings: list[str],
     force_empty_actions: bool = False,
+    budget_diagnostics: dict[str, int] | None = None,
+    partial_diagnostics: dict[str, Any] | None = None,
 ) -> DrawingPlan:
     builder = toolset.builder
     if builder is None:
@@ -410,6 +608,8 @@ def _drawing_plan_from_toolset(
             "warnings": warnings,
             "errors": errors,
             "failed_calls": builder_failed_calls,
+            **(budget_diagnostics or {}),
+            **(partial_diagnostics or {}),
             "requires_robot_feasibility_check": True,
             "note": PLANNER_SCOPE_NOTE,
         },

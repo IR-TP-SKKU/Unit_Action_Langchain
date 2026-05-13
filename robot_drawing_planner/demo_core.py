@@ -16,7 +16,8 @@ from typing import Any, Literal
 
 from robot_drawing_planner.agent_events import AgentRunEvent, AgentRunResult, make_event
 from robot_drawing_planner.agent_planner import (
-    DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
+    DEFAULT_AGENTIC_LLM_STEPS,
+    DEFAULT_AGENTIC_TOOL_CALLS,
     MAX_AGENTIC_TOOL_CALL_ROUNDS,
     plan_drawing_agentic,
 )
@@ -36,7 +37,9 @@ def run_demo_request(
     llm: Any | None = None,
     model_name: str | None = None,
     request_timeout_s: float | None = None,
-    max_steps: int = DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
+    max_steps: int | None = None,
+    max_llm_steps: int = DEFAULT_AGENTIC_LLM_STEPS,
+    max_tool_calls: int = DEFAULT_AGENTIC_TOOL_CALLS,
     create_plot: bool = True,
     show_pen_up_moves: bool = False,
     event_callback: Callable[[AgentRunEvent], None] | None = None,
@@ -52,6 +55,7 @@ def run_demo_request(
     base_name = f"{timestamp}-{safe_slug(command)}"
     plan_path = output_dir / f"{base_name}.json"
     plot_path = output_dir / f"{base_name}.png"
+    events_path = output_dir / f"{base_name}_events.json"
 
     if mode == "agentic":
         live_llm = (
@@ -64,6 +68,8 @@ def run_demo_request(
             config=planner_config,
             llm=live_llm,
             max_steps=max_steps,
+            max_llm_steps=max_llm_steps,
+            max_tool_calls=max_tool_calls,
             event_callback=event_callback,
             collect_events=True,
             plan_snapshot_callback=plan_snapshot_callback,
@@ -116,12 +122,22 @@ def run_demo_request(
         if event_callback is not None:
             event_callback(events[-1])
 
+    write_events_json(
+        command=command,
+        mode=mode,
+        events=events,
+        path=events_path,
+        plan_json_path=str(plan_path),
+        plot_png_path=plot_png_path,
+    )
+
     return AgentRunResult(
         command=command,
         plan=plan,
         events=events,
         plan_json_path=str(plan_path),
         plot_png_path=plot_png_path,
+        events_json_path=str(events_path),
     )
 
 
@@ -143,6 +159,32 @@ def write_plan_json(plan: DrawingPlan, path: str | Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(plan.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return output_path
+
+
+def write_events_json(
+    command: str,
+    mode: str,
+    events: list[AgentRunEvent],
+    path: str | Path,
+    plan_json_path: str | None,
+    plot_png_path: str | None,
+) -> Path:
+    """Write sanitized agent event log JSON and return its path."""
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "command": command,
+        "mode": mode,
+        "plan_json_path": plan_json_path,
+        "plot_png_path": plot_png_path,
+        "events": [event.model_dump(mode="json") for event in events],
+    }
+    output_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     return output_path

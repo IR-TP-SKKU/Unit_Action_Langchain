@@ -11,7 +11,8 @@ from typing import Any
 
 from robot_drawing_planner.agent_events import AgentRunEvent
 from robot_drawing_planner.agent_planner import (
-    DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
+    DEFAULT_AGENTIC_LLM_STEPS,
+    DEFAULT_AGENTIC_TOOL_CALLS,
     MAX_AGENTIC_TOOL_CALL_ROUNDS,
     plan_drawing_agentic,
 )
@@ -38,14 +39,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max-steps",
-        "--max-tool-calls",
-        dest="max_steps",
+        "--max-llm-steps",
+        dest="max_llm_steps",
         type=int,
-        default=DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
+        default=DEFAULT_AGENTIC_LLM_STEPS,
         help=(
-            "Maximum LLM/tool-calling rounds for agentic mode "
+            "Maximum LLM response loop steps for agentic mode "
             f"(1-{MAX_AGENTIC_TOOL_CALL_ROUNDS}, default: "
-            f"{DEFAULT_AGENTIC_TOOL_CALL_ROUNDS})."
+            f"{DEFAULT_AGENTIC_LLM_STEPS})."
+        ),
+    )
+    parser.add_argument(
+        "--max-tool-calls",
+        type=int,
+        default=DEFAULT_AGENTIC_TOOL_CALLS,
+        help=(
+            "Maximum unit-action tool calls for agentic mode "
+            f"(1-{MAX_AGENTIC_TOOL_CALL_ROUNDS}, default: "
+            f"{DEFAULT_AGENTIC_TOOL_CALLS})."
         ),
     )
     parser.add_argument(
@@ -103,10 +114,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if args.max_steps < 1 or args.max_steps > MAX_AGENTIC_TOOL_CALL_ROUNDS:
-            raise ValueError(
-                f"--max-steps must be between 1 and {MAX_AGENTIC_TOOL_CALL_ROUNDS}."
-            )
+        is_agentic_mode = not args.no_api and args.mode == "agentic"
+        if is_agentic_mode:
+            if args.max_llm_steps < 1 or args.max_llm_steps > MAX_AGENTIC_TOOL_CALL_ROUNDS:
+                raise ValueError(
+                    f"--max-steps/--max-llm-steps must be between 1 and "
+                    f"{MAX_AGENTIC_TOOL_CALL_ROUNDS}."
+                )
+            if args.max_tool_calls < 1 or args.max_tool_calls > MAX_AGENTIC_TOOL_CALL_ROUNDS:
+                raise ValueError(
+                    f"--max-tool-calls must be between 1 and {MAX_AGENTIC_TOOL_CALL_ROUNDS}."
+                )
         if args.request_timeout <= 0:
             raise ValueError("--request-timeout must be positive.")
         config = _load_config(args.config)
@@ -122,7 +140,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.command,
                 config=config,
                 llm=llm,
-                max_steps=args.max_steps,
+                max_llm_steps=args.max_llm_steps,
+                max_tool_calls=args.max_tool_calls,
                 event_callback=(
                     _print_event_to_stderr if args.stream_events else None
                 ),

@@ -5,6 +5,27 @@ import sys
 import pytest
 
 from robot_drawing_planner import cli
+from robot_drawing_planner.schemas import DrawingPlan, NormalizedGoal, Point2D
+
+
+def _minimal_plan(command: str) -> DrawingPlan:
+    return DrawingPlan(
+        source_command=command,
+        goal=NormalizedGoal(
+            shape_type="custom",
+            center=Point2D(x=0.0, y=0.0),
+            radius_m=None,
+            side_length_m=None,
+            size_m=0.1,
+            orientation_rad=0.0,
+            letter=None,
+            assumptions=[],
+            warnings=[],
+        ),
+        strokes=[],
+        actions=[],
+        diagnostics={"validation_ok": True},
+    )
 
 
 def _run_no_api_payload(command: str, capsys):
@@ -168,10 +189,12 @@ def test_cli_help_mentions_agentic_unit_action_tool_planner(capsys):
     assert "development/testing only" in help_text
     assert "--chatgpt-version" in help_text
     assert "--max-steps" in help_text
+    assert "--max-llm-steps" in help_text
     assert "--max-tool-calls" in help_text
     assert "--stream-events" in help_text
     assert "--request-timeout" in help_text
-    assert "default: 100" in help_text
+    assert "default: 80" in help_text
+    assert "default: 200" in help_text
     assert "default: 120" in help_text
 
 
@@ -180,8 +203,88 @@ def test_cli_rejects_agentic_max_steps_above_1000(capsys):
     captured = capsys.readouterr()
 
     assert result == 1
-    assert "--max-steps must be between 1 and 1000" in captured.err
+    assert "--max-steps/--max-llm-steps must be between 1 and 1000" in captured.err
     assert captured.out == ""
+
+
+def test_cli_rejects_agentic_max_tool_calls_above_1000(capsys):
+    result = cli.main(["draw a square", "--max-tool-calls", "1001"])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "--max-tool-calls must be between 1 and 1000" in captured.err
+    assert captured.out == ""
+
+
+def test_cli_no_api_ignores_agentic_budget_options(capsys):
+    result = cli.main(
+        [
+            "중앙에 한 변 10cm짜리 네모를 그려줘",
+            "--no-api",
+            "--max-llm-steps",
+            "1001",
+            "--max-tool-calls",
+            "1001",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert captured.err == ""
+    payload = json.loads(captured.out)
+    assert payload["goal"]["shape_type"] == "square"
+
+
+def test_cli_passes_agentic_budget_values_to_planner(monkeypatch, capsys):
+    captured_values = {}
+
+    def fake_get_llm(model_name, timeout_seconds=None):
+        captured_values["model_name"] = model_name
+        captured_values["timeout_seconds"] = timeout_seconds
+        return object()
+
+    def fake_plan_drawing_agentic(
+        command,
+        *,
+        config,
+        llm,
+        max_llm_steps,
+        max_tool_calls,
+        event_callback=None,
+    ):
+        captured_values["command"] = command
+        captured_values["config"] = config
+        captured_values["llm"] = llm
+        captured_values["max_llm_steps"] = max_llm_steps
+        captured_values["max_tool_calls"] = max_tool_calls
+        captured_values["event_callback"] = event_callback
+        return _minimal_plan(command)
+
+    monkeypatch.setattr(cli, "get_llm", fake_get_llm)
+    monkeypatch.setattr(cli, "plan_drawing_agentic", fake_plan_drawing_agentic)
+
+    result = cli.main(
+        [
+            "draw a custom shape",
+            "--max-llm-steps",
+            "77",
+            "--max-tool-calls",
+            "123",
+            "--request-timeout",
+            "45",
+            "--pretty",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert captured.err == ""
+    assert json.loads(captured.out)["source_command"] == "draw a custom shape"
+    assert captured_values["command"] == "draw a custom shape"
+    assert captured_values["max_llm_steps"] == 77
+    assert captured_values["max_tool_calls"] == 123
+    assert captured_values["timeout_seconds"] == 45
+    assert captured_values["event_callback"] is None
 
 
 def test_cli_rejects_nonpositive_request_timeout(capsys):

@@ -77,6 +77,10 @@ class AgentRunResult(BaseModel):
         default=None,
         description="Optional saved plot PNG path.",
     )
+    events_json_path: str | None = Field(
+        default=None,
+        description="Optional saved sanitized event log JSON path.",
+    )
 
 
 def make_event(

@@ -54,12 +54,15 @@ def test_run_demo_request_no_api_generates_plan_json_and_plot_png(tmp_path):
     assert isinstance(result, AgentRunResult)
     assert result.plan_json_path is not None
     assert result.plot_png_path is not None
+    assert result.events_json_path is not None
     assert result.plan.diagnostics["validation_ok"] is True
 
     plan_path = tmp_path / result.plan_json_path.split("/")[-1]
     plot_path = tmp_path / result.plot_png_path.split("/")[-1]
+    events_path = tmp_path / result.events_json_path.split("/")[-1]
     assert plan_path.exists()
     assert plot_path.exists()
+    assert events_path.exists()
 
 
 def test_run_demo_request_events_include_plot_generated(tmp_path):
@@ -97,6 +100,23 @@ def test_run_demo_request_plan_json_is_valid_json(tmp_path):
     assert data["actions"]
 
 
+def test_run_demo_request_events_json_is_valid_json(tmp_path):
+    result = run_demo_request(
+        "중앙에 한 변 10cm짜리 네모를 그려줘",
+        mode="no-api",
+        out_dir=tmp_path,
+        create_plot=False,
+    )
+
+    assert result.events_json_path is not None
+    data = json.loads(open(result.events_json_path, encoding="utf-8").read())
+    assert data["command"] == "중앙에 한 변 10cm짜리 네모를 그려줘"
+    assert data["mode"] == "no-api"
+    assert data["plan_json_path"] == result.plan_json_path
+    assert data["plot_png_path"] is None
+    assert data["events"]
+
+
 def test_run_demo_request_agentic_fake_llm_returns_tool_events(tmp_path):
     result = run_demo_request(
         "draw a short line",
@@ -115,6 +135,40 @@ def test_run_demo_request_agentic_fake_llm_returns_tool_events(tmp_path):
         event.event_type == "tool_call" and event.tool_name == "draw_line_to"
         for event in result.events
     )
+
+
+def test_run_demo_request_agentic_passes_budget_values(tmp_path):
+    result = run_demo_request(
+        "draw a short line",
+        mode="agentic",
+        out_dir=tmp_path,
+        llm=FakeToolCallingLLM(one_line_batches()),
+        max_llm_steps=91,
+        max_tool_calls=92,
+        create_plot=False,
+    )
+
+    assert result.plan.diagnostics["validation_ok"] is True
+    assert result.plan.diagnostics["max_llm_steps"] == 91
+    assert result.plan.diagnostics["max_tool_calls"] == 92
+
+
+def test_run_demo_request_agentic_events_json_contains_tool_events(tmp_path):
+    result = run_demo_request(
+        "draw a short line",
+        mode="agentic",
+        out_dir=tmp_path,
+        llm=FakeToolCallingLLM(one_line_batches()),
+        create_plot=False,
+    )
+
+    assert result.events_json_path is not None
+    text = open(result.events_json_path, encoding="utf-8").read()
+    data = json.loads(text)
+    event_types = [event["event_type"] for event in data["events"]]
+    assert "tool_call" in event_types
+    assert "tool_result" in event_types
+    assert "OPENAI_API_KEY" not in text
 
 
 def test_run_demo_request_agentic_streams_events_via_callback(tmp_path):

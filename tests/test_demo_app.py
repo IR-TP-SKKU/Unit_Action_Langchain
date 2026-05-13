@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import sys
 
 from robot_drawing_planner.agent_events import make_event
@@ -73,7 +74,19 @@ def test_demo_app_uses_1000_max_tool_call_rounds(monkeypatch):
     module = import_demo_app_fresh(monkeypatch)
 
     assert module.MAX_AGENTIC_TOOL_CALL_ROUNDS == 1000
-    assert module.DEFAULT_AGENTIC_TOOL_CALL_ROUNDS == 100
+    assert module.DEFAULT_AGENTIC_LLM_STEPS == 80
+    assert module.DEFAULT_AGENTIC_TOOL_CALLS == 200
+
+
+def test_demo_app_exposes_budget_controls(monkeypatch):
+    module = import_demo_app_fresh(monkeypatch)
+    source = inspect.getsource(module.main)
+
+    assert "Max LLM steps" in source
+    assert "Max tool calls" in source
+    assert "Open-ended prompts may need more LLM/tool-call budget." in source
+    assert "max_llm_steps=int(max_llm_steps)" in source
+    assert "max_tool_calls=int(max_tool_calls)" in source
 
 
 def test_demo_app_model_choice_helpers(monkeypatch):
@@ -190,6 +203,101 @@ def test_live_plot_figure_returns_matplotlib_figure(monkeypatch):
         import matplotlib.pyplot as plt
 
         plt.close(fig)
+
+
+def test_demo_app_result_record_supports_events_json_path(monkeypatch, tmp_path):
+    module = import_demo_app_fresh(monkeypatch)
+    event_path = tmp_path / "events.json"
+    event_path.write_text("{}", encoding="utf-8")
+    record = {
+        "kind": "result",
+        "plan_json_path": None,
+        "plot_png_path": None,
+        "events_json_path": str(event_path),
+        "plan": {},
+    }
+
+    assert record["events_json_path"] == str(event_path)
+    assert module.load_bytes(record["events_json_path"]) == b"{}"
+
+
+def test_classify_plan_result_marks_valid_plan_as_final(monkeypatch):
+    module = import_demo_app_fresh(monkeypatch)
+    status = module.classify_plan_result(
+        {
+            "strokes": [
+                {
+                    "type": "line",
+                    "stroke_id": "stroke_001",
+                    "start": {"x": 0.0, "y": 0.0, "unit": "m"},
+                    "end": {"x": 0.05, "y": 0.0, "unit": "m"},
+                }
+            ],
+            "diagnostics": {"validation_ok": True},
+        }
+    )
+
+    assert status["validation_ok"] is True
+    assert "final planned" in status["summary"]
+    assert status["image_caption"] == "Final planned board-frame path"
+
+
+def test_classify_plan_result_marks_invalid_strokes_as_partial_preview(monkeypatch):
+    module = import_demo_app_fresh(monkeypatch)
+    plan = {
+        "strokes": [
+            {
+                "type": "line",
+                "stroke_id": "stroke_001",
+                "start": {"x": 0.0, "y": 0.0, "unit": "m"},
+                "end": {"x": 0.05, "y": 0.0, "unit": "m"},
+            }
+        ],
+        "diagnostics": {
+            "validation_ok": False,
+            "errors": ["Agentic planning failed: max_llm_steps 1 exceeded."],
+            "failed_calls": ["draw_line_to rejected: outside board"],
+            "partial_preview_available": True,
+        },
+    }
+
+    status = module.classify_plan_result(plan)
+    diagnostics_text = module.result_diagnostics_markdown(plan)
+
+    assert status["validation_ok"] is False
+    assert status["partial_preview"] is True
+    assert "partial preview" in status["summary"]
+    assert status["image_caption"] == "Partial planned-path preview — not executable"
+    assert "diagnostics.errors" in diagnostics_text
+    assert "diagnostics.failed_calls" in diagnostics_text
+    assert "diagnostics.partial_preview_available" in diagnostics_text
+
+
+def test_plan_plot_caption_uses_final_or_partial_text(monkeypatch):
+    module = import_demo_app_fresh(monkeypatch)
+
+    assert (
+        module._plan_plot_caption(
+            {"strokes": [], "diagnostics": {"validation_ok": True}}
+        )
+        == "Final planned board-frame path"
+    )
+    assert (
+        module._plan_plot_caption(
+            {
+                "strokes": [
+                    {
+                        "type": "line",
+                        "stroke_id": "stroke_001",
+                        "start": {"x": 0.0, "y": 0.0, "unit": "m"},
+                        "end": {"x": 0.05, "y": 0.0, "unit": "m"},
+                    }
+                ],
+                "diagnostics": {"validation_ok": False},
+            }
+        )
+        == "Partial planned-path preview — not executable"
+    )
 
 
 def test_demo_app_import_does_not_execute_planner(monkeypatch):

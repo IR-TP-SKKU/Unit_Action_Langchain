@@ -84,11 +84,20 @@ Choose a ChatGPT/OpenAI model version and stream planner events as they happen:
 zsh -ic 'robot-drawing-plan "집 모양을 그려줘" --chatgpt-version gpt-5-nano --max-tool-calls 1000 --request-timeout 120 --stream-events --pretty'
 ```
 
+Open-ended prompts such as house, star, or smiley drawings may need larger
+agentic budgets than simple template-like shapes:
+
+```bash
+python -m robot_drawing_planner.cli "집 모양을 그려줘" --max-llm-steps 80 --max-tool-calls 200 --pretty
+```
+
 `--stream-events` writes one line per LLM/tool event to stderr as each event
 completes, while the final `DrawingPlan` JSON remains on stdout or `--out`.
 `--request-timeout` is the per-LLM-request timeout in seconds. It is different
-from `--max-tool-calls`, which caps the agentic planning loop at 1000
-tool-calling rounds.
+from `--max-llm-steps`, which caps LLM response calls, and
+`--max-tool-calls`, which caps executed Unit Action tool calls. These budget
+options apply to agentic mode; `--no-api` and template baseline mode do not use
+the Unit Action tool-call loop.
 
 Template baseline mode:
 
@@ -194,12 +203,20 @@ such as `id`, `object`, `created`, and `owned_by`; the GUI filters that list to
 planner-oriented GPT/reasoning model ids and still allows a manual custom model
 override.
 
-The GUI streams agentic tool-call events by default. Its max tool-call rounds
-control defaults to 100 and allows values up to 1000. Its request timeout
-control defaults to 120 seconds and adjusts the per-request OpenAI timeout. The
-screen is split into a scrollable left
+The GUI streams agentic tool-call events by default. Its max LLM response step
+control defaults to 80, its max tool-call control defaults to 200, and both
+allow values up to 1000. Its request timeout control defaults to 120 seconds and
+adjusts the per-request OpenAI timeout. The screen is split into a scrollable left
 chat/tool timeline and a right live plot panel; the right panel stays visible
 and updates as accepted unit-action tool calls add planned strokes.
+
+If planning fails or reaches a budget limit after producing some strokes, the
+GUI labels the image as a partial preview only. A partial preview is for
+debugging the LLM plan and should not be sent to the robot. The result panel
+shows `diagnostics.errors`, `diagnostics.failed_calls`, and
+`diagnostics.partial_preview_available` when those fields are present. Only a
+plan with `diagnostics.validation_ok == true` is labeled as the final planned
+board-frame path.
 
 ## Open-Ended Agentic Examples
 

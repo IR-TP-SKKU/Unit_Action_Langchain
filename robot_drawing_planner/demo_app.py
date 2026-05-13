@@ -22,7 +22,8 @@ from robot_drawing_planner.agent_events import (
     make_event,
 )
 from robot_drawing_planner.agent_planner import (
-    DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
+    DEFAULT_AGENTIC_LLM_STEPS,
+    DEFAULT_AGENTIC_TOOL_CALLS,
     MAX_AGENTIC_TOOL_CALL_ROUNDS,
 )
 from robot_drawing_planner.config import DEFAULT_MODEL, DEFAULT_TIMEOUT_SECONDS
@@ -201,11 +202,17 @@ def main() -> None:
         )
         custom_model = st.text_input("Custom model override", value="")
         model_name = custom_model.strip() or selected_model
-        max_steps = st.number_input(
-            "Max tool-call rounds",
+        max_llm_steps = st.number_input(
+            "Max LLM steps",
             min_value=1,
             max_value=MAX_AGENTIC_TOOL_CALL_ROUNDS,
-            value=DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
+            value=DEFAULT_AGENTIC_LLM_STEPS,
+        )
+        max_tool_calls = st.number_input(
+            "Max tool calls",
+            min_value=1,
+            max_value=MAX_AGENTIC_TOOL_CALL_ROUNDS,
+            value=DEFAULT_AGENTIC_TOOL_CALLS,
         )
         request_timeout_s = st.number_input(
             "Request timeout seconds",
@@ -218,6 +225,7 @@ def main() -> None:
         show_raw_json = st.checkbox("Show raw JSON", value=False)
         out_dir = st.text_input("Output directory", value="outputs/demo")
         st.caption("Model temperature is fixed at 0 for deterministic planning.")
+        st.caption("Open-ended prompts may need more LLM/tool-call budget.")
         st.caption(
             "Refresh uses OpenAI's Models API; it exposes basic id/owner metadata, "
             "not full tool-calling capability guarantees."
@@ -250,6 +258,7 @@ def main() -> None:
                 plot_placeholder,
                 latest_plan,
                 show_pen_up_moves=show_pen_up_moves,
+                caption=_plan_plot_caption(latest_plan),
             )
         else:
             plot_placeholder.info("The planned board-frame path will update here.")
@@ -346,7 +355,8 @@ def main() -> None:
                 out_dir=out_dir,
                 model_name=model_name.strip() or None,
                 request_timeout_s=float(request_timeout_s),
-                max_steps=int(max_steps),
+                max_llm_steps=int(max_llm_steps),
+                max_tool_calls=int(max_tool_calls),
                 create_plot=True,
                 show_pen_up_moves=show_pen_up_moves,
                 event_callback=stream_event,
@@ -380,6 +390,7 @@ def main() -> None:
         "kind": "result",
         "plan_json_path": result.plan_json_path,
         "plot_png_path": result.plot_png_path,
+        "events_json_path": result.events_json_path,
         "plan": result.plan.model_dump(mode="json"),
     }
     st.session_state["demo_latest_live_plan"] = result_record["plan"]
@@ -387,6 +398,7 @@ def main() -> None:
         plot_placeholder,
         result_record["plan"],
         show_pen_up_moves=show_pen_up_moves,
+        caption=_plan_plot_caption(result_record["plan"]),
     )
     history.append(result_record)
     with live_container:
@@ -428,6 +440,7 @@ def _render_live_plot(
     placeholder: Any,
     plan: DrawingPlan | dict[str, Any],
     show_pen_up_moves: bool,
+    caption: str = "Updates as unit-action tool calls add planned strokes.",
 ) -> None:
     from matplotlib import pyplot as plt
 
@@ -435,7 +448,7 @@ def _render_live_plot(
     try:
         with placeholder.container():
             st.pyplot(fig, clear_figure=True)
-            st.caption("Updates as unit-action tool calls add planned strokes.")
+            st.caption(caption)
     finally:
         plt.close(fig)
 
@@ -461,11 +474,26 @@ def _render_history_record(record: dict[str, Any], show_raw_json: bool) -> None:
 def _render_result_record(record: dict[str, Any], show_raw_json: bool) -> None:
     plan_json_path = record.get("plan_json_path")
     plot_png_path = record.get("plot_png_path")
+    events_json_path = record.get("events_json_path")
     plan_payload = record.get("plan") or {}
+    status = classify_plan_result(plan_payload)
 
     with st.chat_message("assistant"):
+        if status["validation_ok"]:
+            st.success("Final planned board-frame path is ready.")
+        else:
+            st.error("Planning did not produce an executable final plan.")
+            if status["has_strokes"]:
+                st.warning(
+                    "The image below is a partial preview only and should not be sent to the robot."
+                )
+        diagnostics_text = result_diagnostics_markdown(plan_payload)
+        if diagnostics_text:
+            st.markdown(diagnostics_text)
         if plot_png_path and Path(plot_png_path).exists():
-            st.caption("Final planned path is shown in the right-side live plot panel.")
+            st.caption(
+                f"{status['image_caption']} is shown in the right-side live plot panel."
+            )
         if plan_json_path and Path(plan_json_path).exists():
             st.download_button(
                 "Download plan JSON",
@@ -480,6 +508,13 @@ def _render_result_record(record: dict[str, Any], show_raw_json: bool) -> None:
                 file_name=Path(plot_png_path).name,
                 mime="image/png",
             )
+        if events_json_path and Path(events_json_path).exists():
+            st.download_button(
+                "Download event log JSON",
+                data=load_bytes(events_json_path),
+                file_name=Path(events_json_path).name,
+                mime="application/json",
+            )
         if show_raw_json:
             with st.expander("DrawingPlan JSON"):
                 st.json(plan_payload)
@@ -487,6 +522,82 @@ def _render_result_record(record: dict[str, Any], show_raw_json: bool) -> None:
             "Planned primitive path only; no robot execution, IK, FK, Jacobians, "
             "joint commands, torque, dynamics, or Isaac Sim execution."
         )
+
+
+def classify_plan_result(plan_payload: DrawingPlan | dict[str, Any]) -> dict[str, Any]:
+    """Classify a rendered result as executable, partial preview, or failed empty."""
+
+    payload = (
+        plan_payload.model_dump(mode="json")
+        if isinstance(plan_payload, DrawingPlan)
+        else dict(plan_payload or {})
+    )
+    diagnostics = payload.get("diagnostics") or {}
+    validation_ok = bool(diagnostics.get("validation_ok"))
+    has_strokes = bool(payload.get("strokes") or [])
+    partial_preview = (not validation_ok) and has_strokes
+    if validation_ok:
+        image_caption = "Final planned board-frame path"
+        summary = "final planned board-frame path"
+    elif partial_preview:
+        image_caption = "Partial planned-path preview — not executable"
+        summary = "partial preview only; not executable"
+    else:
+        image_caption = "No executable planned path"
+        summary = "planning failed without drawable preview"
+    return {
+        "validation_ok": validation_ok,
+        "has_strokes": has_strokes,
+        "partial_preview": partial_preview,
+        "image_caption": image_caption,
+        "summary": summary,
+    }
+
+
+def _plan_plot_caption(plan_payload: DrawingPlan | dict[str, Any]) -> str:
+    status = classify_plan_result(plan_payload)
+    diagnostics = (
+        plan_payload.diagnostics
+        if isinstance(plan_payload, DrawingPlan)
+        else (plan_payload.get("diagnostics") or {})
+    )
+    if "validation_ok" not in diagnostics:
+        return "Updates as unit-action tool calls add planned strokes."
+    return str(status["image_caption"])
+
+
+def result_diagnostics_markdown(plan_payload: DrawingPlan | dict[str, Any]) -> str:
+    """Return a concise diagnostics block for the GUI result message."""
+
+    payload = (
+        plan_payload.model_dump(mode="json")
+        if isinstance(plan_payload, DrawingPlan)
+        else dict(plan_payload or {})
+    )
+    diagnostics = payload.get("diagnostics") or {}
+    lines: list[str] = []
+
+    errors = diagnostics.get("errors") or []
+    if errors:
+        lines.append("**diagnostics.errors**")
+        lines.extend(f"- {error}" for error in errors)
+
+    failed_calls = diagnostics.get("failed_calls") or []
+    if failed_calls:
+        if lines:
+            lines.append("")
+        lines.append("**diagnostics.failed_calls**")
+        lines.extend(f"- {call}" for call in failed_calls)
+
+    if "partial_preview_available" in diagnostics:
+        if lines:
+            lines.append("")
+        lines.append(
+            "**diagnostics.partial_preview_available:** "
+            f"`{diagnostics['partial_preview_available']}`"
+        )
+
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
