@@ -1,6 +1,7 @@
 """LangChain-assisted drawing planner for robot primitive plans."""
 
 from robot_drawing_planner.config import PlannerConfig
+from robot_drawing_planner.plan_state import PlanBuilder
 from robot_drawing_planner.planner import plan_from_goal, plan_from_text
 from robot_drawing_planner.schemas import (
     ArcStroke,
@@ -24,6 +25,7 @@ __all__ = [
     "Measurement",
     "NormalizedGoal",
     "ParsedGoal",
+    "PlanBuilder",
     "PlannerConfig",
     "Point2D",
     "Point3D",
