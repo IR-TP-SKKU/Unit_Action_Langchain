@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from robot_drawing_planner import cli
 
 
@@ -64,6 +66,17 @@ def test_cli_no_api_korean_letter_a(tmp_path, capsys):
     assert payload["actions"]
 
 
+def test_cli_mode_template_with_no_api_still_uses_demo_fallback(capsys):
+    result = cli.main(["Draw a circle with radius 5 cm", "--mode", "template", "--no-api"])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert captured.err == ""
+    payload = json.loads(captured.out)
+    assert payload["goal"]["shape_type"] == "circle"
+    assert payload["actions"][3]["name"] == "draw_arc"
+
+
 def test_cli_default_mode_missing_live_key_is_nonzero_and_no_secret(monkeypatch, capsys):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     result = cli.main(["Draw a circle with radius 5 cm"])
@@ -73,3 +86,16 @@ def test_cli_default_mode_missing_live_key_is_nonzero_and_no_secret(monkeypatch,
     assert "OPENAI_API_KEY is not set" in captured.err
     assert "sk-" not in captured.err
     assert captured.out == ""
+
+
+def test_cli_help_mentions_agentic_unit_action_tool_planner(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--help"])
+    captured = capsys.readouterr()
+
+    assert exc.value.code == 0
+    help_text = " ".join(captured.out.split())
+    assert "Default mode uses LLM agentic planning over Unit Action tools" in help_text
+    assert "template" in help_text
+    assert "ParsedGoal/template compiler baseline" in help_text
+    assert "development/testing only" in help_text

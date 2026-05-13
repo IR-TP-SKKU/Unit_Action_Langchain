@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from robot_drawing_planner.agent_planner import plan_drawing_agentic
 from robot_drawing_planner.config import PlannerConfig
 from robot_drawing_planner.llm_client import get_llm
 from robot_drawing_planner.planner import build_plan_from_parsed_goal, plan_drawing
@@ -17,15 +18,30 @@ from robot_drawing_planner.schemas import Measurement, ParsedGoal
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Convert a natural language drawing command into robot primitive JSON."
+        description=(
+            "Convert a natural language drawing command into robot primitive JSON. "
+            "Default mode uses LLM agentic planning over Unit Action tools."
+        )
     )
     parser.add_argument("command", help="Natural language drawing command.")
     parser.add_argument("--out", help="Optional path where JSON plan will be written.")
     parser.add_argument("--model", help="Optional OpenAI model override.")
     parser.add_argument(
+        "--mode",
+        choices=["agentic", "template"],
+        default="agentic",
+        help=(
+            "Planning mode. Default 'agentic' uses LLM agentic planning over Unit Action "
+            "tools. 'template' uses the old ParsedGoal/template compiler baseline."
+        ),
+    )
+    parser.add_argument(
         "--no-api",
         action="store_true",
-        help="Use deterministic demo parser for development/testing only.",
+        help=(
+            "Use deterministic demo fallback for development/testing only; this never "
+            "calls OpenAI and does not exercise production agentic planning."
+        ),
     )
     parser.add_argument(
         "--pretty",
@@ -48,9 +64,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.no_api:
             parsed = demo_parse_command(args.command)
             plan = build_plan_from_parsed_goal(parsed, config=config)
-        else:
+        elif args.mode == "template":
             llm = get_llm(args.model)
             plan = plan_drawing(args.command, config=config, llm=llm)
+        else:
+            llm = get_llm(args.model)
+            plan = plan_drawing_agentic(args.command, config=config, llm=llm)
 
         json_text = json.dumps(
             plan.model_dump(mode="json"),
