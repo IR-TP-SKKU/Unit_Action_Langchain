@@ -25,7 +25,11 @@ class Invokable(Protocol):
         ...
 
 
-def get_llm(model_name: str | None = None) -> "ChatOpenAI":
+def get_llm(
+    model_name: str | None = None,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
+) -> "ChatOpenAI":
     """Build a deterministic ChatOpenAI client.
 
     Model priority:
@@ -40,8 +44,8 @@ def get_llm(model_name: str | None = None) -> "ChatOpenAI":
     return ChatOpenAI(
         model=model_name or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL,
         temperature=0,
-        timeout=DEFAULT_TIMEOUT_SECONDS,
-        max_retries=DEFAULT_MAX_RETRIES,
+        timeout=timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS,
+        max_retries=max_retries if max_retries is not None else DEFAULT_MAX_RETRIES,
     )
 
 

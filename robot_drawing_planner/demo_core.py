@@ -9,14 +9,20 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from robot_drawing_planner.agent_events import AgentRunEvent, AgentRunResult, make_event
-from robot_drawing_planner.agent_planner import plan_drawing_agentic
+from robot_drawing_planner.agent_planner import (
+    DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
+    MAX_AGENTIC_TOOL_CALL_ROUNDS,
+    plan_drawing_agentic,
+)
 from robot_drawing_planner.cli import demo_parse_command
 from robot_drawing_planner.config import DEFAULT_CONFIG, PlannerConfig
+from robot_drawing_planner.llm_client import get_llm
 from robot_drawing_planner.planner import build_plan_from_parsed_goal, plan_drawing
 from robot_drawing_planner.schemas import DrawingPlan
 from robot_drawing_planner.visualization import save_plan_plot
@@ -28,9 +34,13 @@ def run_demo_request(
     out_dir: str | Path = "outputs/demo",
     config: PlannerConfig | None = None,
     llm: Any | None = None,
-    max_steps: int = 30,
+    model_name: str | None = None,
+    request_timeout_s: float | None = None,
+    max_steps: int = DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
     create_plot: bool = True,
     show_pen_up_moves: bool = False,
+    event_callback: Callable[[AgentRunEvent], None] | None = None,
+    plan_snapshot_callback: Callable[[DrawingPlan], None] | None = None,
 ) -> AgentRunResult:
     """Run a planner demo request and save plan JSON plus optional plot PNG."""
 
@@ -44,19 +54,31 @@ def run_demo_request(
     plot_path = output_dir / f"{base_name}.png"
 
     if mode == "agentic":
+        live_llm = (
+            llm
+            if llm is not None
+            else get_llm(model_name, timeout_seconds=request_timeout_s)
+        )
         agentic_result = plan_drawing_agentic(
             command,
             config=planner_config,
-            llm=llm,
+            llm=live_llm,
             max_steps=max_steps,
+            event_callback=event_callback,
             collect_events=True,
+            plan_snapshot_callback=plan_snapshot_callback,
         )
         if not isinstance(agentic_result, AgentRunResult):
             raise TypeError("agentic planner did not return AgentRunResult")
         plan = agentic_result.plan
         events = list(agentic_result.events)
     elif mode == "template":
-        plan = plan_drawing(command, config=planner_config, llm=llm)
+        live_llm = (
+            llm
+            if llm is not None
+            else get_llm(model_name, timeout_seconds=request_timeout_s)
+        )
+        plan = plan_drawing(command, config=planner_config, llm=live_llm)
         events = _baseline_events(command, plan, mode="template")
     elif mode == "no-api":
         parsed_goal = demo_parse_command(command)
@@ -64,6 +86,12 @@ def run_demo_request(
         events = _baseline_events(command, plan, mode="no-api")
     else:
         raise ValueError(f"Unsupported demo mode: {mode}")
+
+    if mode != "agentic" and event_callback is not None:
+        for event in events:
+            event_callback(event)
+    if mode != "agentic" and plan_snapshot_callback is not None:
+        plan_snapshot_callback(plan)
 
     write_plan_json(plan, plan_path)
     plot_png_path: str | None = None
@@ -85,6 +113,8 @@ def run_demo_request(
                 metadata={"plot_png_path": str(saved_plot)},
             )
         )
+        if event_callback is not None:
+            event_callback(events[-1])
 
     return AgentRunResult(
         command=command,

@@ -166,3 +166,49 @@ def test_cli_help_mentions_agentic_unit_action_tool_planner(capsys):
     assert "template" in help_text
     assert "ParsedGoal/template compiler baseline" in help_text
     assert "development/testing only" in help_text
+    assert "--chatgpt-version" in help_text
+    assert "--max-steps" in help_text
+    assert "--max-tool-calls" in help_text
+    assert "--stream-events" in help_text
+    assert "--request-timeout" in help_text
+    assert "default: 100" in help_text
+    assert "default: 120" in help_text
+
+
+def test_cli_rejects_agentic_max_steps_above_1000(capsys):
+    result = cli.main(["draw a square", "--max-steps", "1001"])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "--max-steps must be between 1 and 1000" in captured.err
+    assert captured.out == ""
+
+
+def test_cli_rejects_nonpositive_request_timeout(capsys):
+    result = cli.main(["draw a square", "--request-timeout", "0"])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "--request-timeout must be positive" in captured.err
+    assert captured.out == ""
+
+
+def test_cli_terminal_event_line_is_single_line():
+    event = cli.AgentRunEvent(
+        event_index=0,
+        step_index=1,
+        event_type="tool_result",
+        tool_name="draw_line_to",
+        tool_args=None,
+        tool_result=None,
+        message="draw_line appended.\nnext",
+        ok=True,
+        timestamp="2026-01-01T00:00:00+00:00",
+        metadata={},
+    )
+
+    line = cli._event_to_terminal_line(event)
+
+    assert "\n" not in line
+    assert "draw_line_to" in line
+    assert "ok=True" in line

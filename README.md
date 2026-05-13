@@ -78,6 +78,18 @@ Live LangChain/OpenAI agentic Unit Action tool mode:
 zsh -ic 'robot-drawing-plan "중앙에 반지름 5cm짜리 원을 그려줘" --pretty --out outputs/circle_plan.json'
 ```
 
+Choose a ChatGPT/OpenAI model version and stream planner events as they happen:
+
+```bash
+zsh -ic 'robot-drawing-plan "집 모양을 그려줘" --chatgpt-version gpt-5-nano --max-tool-calls 1000 --request-timeout 120 --stream-events --pretty'
+```
+
+`--stream-events` writes one line per LLM/tool event to stderr as each event
+completes, while the final `DrawingPlan` JSON remains on stdout or `--out`.
+`--request-timeout` is the per-LLM-request timeout in seconds. It is different
+from `--max-tool-calls`, which caps the agentic planning loop at 1000
+tool-calling rounds.
+
 Template baseline mode:
 
 ```bash
@@ -152,8 +164,9 @@ zsh -ic 'streamlit run robot_drawing_planner/demo_app.py'
 The demo shows:
 
 - user message
-- LLM tool calls, one message per tool call
-- tool results, one message per tool result
+- selectable ChatGPT/OpenAI model version and planning options
+- LLM tool calls as they happen, one message per tool call
+- tool results as they happen, one message per tool result
 - final `DrawingPlan` JSON
 - final planned-path plot
 
@@ -174,6 +187,19 @@ Mode behavior:
 - `agentic`: uses the live ChatGPT API and Unit Action tool calls.
 - `no-api`: deterministic demo/testing only; it does not call OpenAI.
 - `template`: baseline ParsedGoal/template compiler mode.
+
+The ChatGPT model selector starts with safe defaults and can refresh available
+model ids from OpenAI's Models API. The Models API provides basic model metadata
+such as `id`, `object`, `created`, and `owned_by`; the GUI filters that list to
+planner-oriented GPT/reasoning model ids and still allows a manual custom model
+override.
+
+The GUI streams agentic tool-call events by default. Its max tool-call rounds
+control defaults to 100 and allows values up to 1000. Its request timeout
+control defaults to 120 seconds and adjusts the per-request OpenAI timeout. The
+screen is split into a scrollable left
+chat/tool timeline and a right live plot panel; the right panel stays visible
+and updates as accepted unit-action tool calls add planned strokes.
 
 ## Open-Ended Agentic Examples
 

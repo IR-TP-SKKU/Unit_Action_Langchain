@@ -77,15 +77,18 @@ PLANNER_SCOPE_NOTE = (
     "This agentic planner outputs primitive action JSON only; it does not compute "
     "IK, FK, Jacobians, joint commands, trajectory samples, or Isaac Sim commands."
 )
+MAX_AGENTIC_TOOL_CALL_ROUNDS = 1000
+DEFAULT_AGENTIC_TOOL_CALL_ROUNDS = 100
 
 
 def plan_drawing_agentic(
     command: str,
     config: PlannerConfig | None = None,
     llm: Any | None = None,
-    max_steps: int = 30,
+    max_steps: int = DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
     event_callback: Callable[[AgentRunEvent], None] | None = None,
     collect_events: bool = False,
+    plan_snapshot_callback: Callable[[DrawingPlan], None] | None = None,
 ) -> DrawingPlan | AgentRunResult:
     return _plan_drawing_agentic_impl(
         command=command,
@@ -94,6 +97,7 @@ def plan_drawing_agentic(
         max_steps=max_steps,
         event_callback=event_callback,
         collect_events=collect_events,
+        plan_snapshot_callback=plan_snapshot_callback,
     )
 
 
@@ -101,11 +105,17 @@ def _plan_drawing_agentic_impl(
     command: str,
     config: PlannerConfig | None = None,
     llm: Any | None = None,
-    max_steps: int = 30,
+    max_steps: int = DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
     event_callback: Callable[[AgentRunEvent], None] | None = None,
     collect_events: bool = False,
+    plan_snapshot_callback: Callable[[DrawingPlan], None] | None = None,
 ) -> DrawingPlan | AgentRunResult:
     """Plan by letting an LLM sequentially call symbolic unit-action tools."""
+
+    if max_steps < 1 or max_steps > MAX_AGENTIC_TOOL_CALL_ROUNDS:
+        raise ValueError(
+            f"max_steps must be between 1 and {MAX_AGENTIC_TOOL_CALL_ROUNDS}."
+        )
 
     planner_config = config or DEFAULT_CONFIG
     toolset = UnitActionToolset(config=planner_config)
@@ -156,6 +166,20 @@ def _plan_drawing_agentic_impl(
             return AgentRunResult(command=command, plan=plan, events=events)
         return plan
 
+    def emit_plan_snapshot(validation_ok: bool = False) -> None:
+        if plan_snapshot_callback is None:
+            return
+        plan_snapshot_callback(
+            _drawing_plan_from_toolset(
+                command=command,
+                toolset=toolset,
+                config=planner_config,
+                validation_ok=validation_ok,
+                extra_errors=[],
+                extra_warnings=[],
+            )
+        )
+
     emit(
         "user_request",
         command,
@@ -205,6 +229,7 @@ def _plan_drawing_agentic_impl(
                 tool_result=_tool_result_event_payload(feedback),
                 ok=bool(feedback.get("ok", False)),
             )
+            emit_plan_snapshot(validation_ok=False)
             messages.append(
                 ToolMessage(
                     content=json.dumps(feedback, ensure_ascii=False),
@@ -234,6 +259,8 @@ def _plan_drawing_agentic_impl(
                             "stroke_count": len(plan.strokes),
                         },
                     )
+                    if plan_snapshot_callback is not None:
+                        plan_snapshot_callback(plan)
                     return result(plan)
                 errors = [feedback.get("message", "finish_plan failed")]
 

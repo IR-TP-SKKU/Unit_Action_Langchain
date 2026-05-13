@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from robot_drawing_planner.schemas import Board, Direction, Point2D
 
 DEFAULT_MODEL = "gpt-5-nano"
-DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_MAX_RETRIES = 2
 
 

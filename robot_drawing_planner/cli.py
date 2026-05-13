@@ -9,8 +9,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from robot_drawing_planner.agent_planner import plan_drawing_agentic
-from robot_drawing_planner.config import PlannerConfig
+from robot_drawing_planner.agent_events import AgentRunEvent
+from robot_drawing_planner.agent_planner import (
+    DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
+    MAX_AGENTIC_TOOL_CALL_ROUNDS,
+    plan_drawing_agentic,
+)
+from robot_drawing_planner.config import DEFAULT_TIMEOUT_SECONDS, PlannerConfig
 from robot_drawing_planner.llm_client import get_llm
 from robot_drawing_planner.planner import build_plan_from_parsed_goal, plan_drawing
 from robot_drawing_planner.schemas import Measurement, ParsedGoal
@@ -25,7 +30,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("command", help="Natural language drawing command.")
     parser.add_argument("--out", help="Optional path where JSON plan will be written.")
-    parser.add_argument("--model", help="Optional OpenAI model override.")
+    parser.add_argument(
+        "--model",
+        "--chatgpt-version",
+        dest="model",
+        help="Optional OpenAI/ChatGPT model version override.",
+    )
+    parser.add_argument(
+        "--max-steps",
+        "--max-tool-calls",
+        dest="max_steps",
+        type=int,
+        default=DEFAULT_AGENTIC_TOOL_CALL_ROUNDS,
+        help=(
+            "Maximum LLM/tool-calling rounds for agentic mode "
+            f"(1-{MAX_AGENTIC_TOOL_CALL_ROUNDS}, default: "
+            f"{DEFAULT_AGENTIC_TOOL_CALL_ROUNDS})."
+        ),
+    )
+    parser.add_argument(
+        "--request-timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help=(
+            "Per-request OpenAI timeout in seconds for live agentic/template modes "
+            f"(default: {DEFAULT_TIMEOUT_SECONDS:g})."
+        ),
+    )
+    parser.add_argument(
+        "--stream-events",
+        action="store_true",
+        help=(
+            "Print agentic planning events to stderr as each tool call/result completes. "
+            "JSON plan output still goes to stdout or --out."
+        ),
+    )
     parser.add_argument(
         "--mode",
         choices=["agentic", "template"],
@@ -64,16 +103,30 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.max_steps < 1 or args.max_steps > MAX_AGENTIC_TOOL_CALL_ROUNDS:
+            raise ValueError(
+                f"--max-steps must be between 1 and {MAX_AGENTIC_TOOL_CALL_ROUNDS}."
+            )
+        if args.request_timeout <= 0:
+            raise ValueError("--request-timeout must be positive.")
         config = _load_config(args.config)
         if args.no_api:
             parsed = demo_parse_command(args.command)
             plan = build_plan_from_parsed_goal(parsed, config=config)
         elif args.mode == "template":
-            llm = get_llm(args.model)
+            llm = get_llm(args.model, timeout_seconds=args.request_timeout)
             plan = plan_drawing(args.command, config=config, llm=llm)
         else:
-            llm = get_llm(args.model)
-            plan = plan_drawing_agentic(args.command, config=config, llm=llm)
+            llm = get_llm(args.model, timeout_seconds=args.request_timeout)
+            plan = plan_drawing_agentic(
+                args.command,
+                config=config,
+                llm=llm,
+                max_steps=args.max_steps,
+                event_callback=(
+                    _print_event_to_stderr if args.stream_events else None
+                ),
+            )
 
         json_text = json.dumps(
             plan.model_dump(mode="json"),
@@ -97,6 +150,32 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+
+def _print_event_to_stderr(event: AgentRunEvent) -> None:
+    print(_event_to_terminal_line(event), file=sys.stderr, flush=True)
+
+
+def _event_to_terminal_line(event: AgentRunEvent) -> str:
+    """Format one planner event as a single stderr line."""
+
+    if event.event_type == "tool_call":
+        args = json.dumps(event.tool_args or {}, ensure_ascii=False, sort_keys=True)
+        return f"[tool_call] {event.tool_name} args={args}"
+    if event.event_type == "tool_result":
+        return f"[tool_result] {event.tool_name} ok={event.ok} message={_one_line(event.message)}"
+    if event.event_type == "llm_message":
+        count = event.metadata.get("tool_call_count")
+        return f"[llm_message] tool_calls={count} message={_one_line(event.message)}"
+    if event.event_type == "plan_finished":
+        return f"[plan_finished] {_one_line(event.message)}"
+    if event.event_type == "error":
+        return f"[error] {_one_line(event.message)}"
+    return f"[{event.event_type}] {_one_line(event.message)}"
+
+
+def _one_line(value: Any) -> str:
+    return " ".join(str(value).split())
 
 
 def demo_parse_command(command: str) -> ParsedGoal:

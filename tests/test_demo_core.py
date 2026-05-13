@@ -103,6 +103,8 @@ def test_run_demo_request_agentic_fake_llm_returns_tool_events(tmp_path):
         mode="agentic",
         out_dir=tmp_path,
         llm=FakeToolCallingLLM(one_line_batches()),
+        model_name="ignored-when-fake-llm-is-passed",
+        request_timeout_s=120.0,
         create_plot=False,
     )
 
@@ -113,6 +115,28 @@ def test_run_demo_request_agentic_fake_llm_returns_tool_events(tmp_path):
         event.event_type == "tool_call" and event.tool_name == "draw_line_to"
         for event in result.events
     )
+
+
+def test_run_demo_request_agentic_streams_events_via_callback(tmp_path):
+    streamed = []
+    snapshots = []
+
+    result = run_demo_request(
+        "draw a short line",
+        mode="agentic",
+        out_dir=tmp_path,
+        llm=FakeToolCallingLLM(one_line_batches()),
+        create_plot=True,
+        event_callback=streamed.append,
+        plan_snapshot_callback=snapshots.append,
+    )
+
+    assert result.plan.diagnostics["validation_ok"] is True
+    assert any(event.event_type == "tool_call" for event in streamed)
+    assert any(event.event_type == "tool_result" for event in streamed)
+    assert streamed[-1].event_type == "plot_generated"
+    assert snapshots
+    assert any(len(snapshot.strokes) == 1 for snapshot in snapshots)
 
 
 def test_safe_slug_removes_problematic_characters():
