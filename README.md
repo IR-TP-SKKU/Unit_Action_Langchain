@@ -2,126 +2,161 @@
 
 LangChain / LLM planner for **LLM-Assisted Robot Shape Drawing in Isaac Sim**.
 
-This package stops at robot-level primitive JSON. It does not generate joint
-angles, IK/FK/Jacobian commands, Isaac Sim commands, trajectories, or robot
-execution code.
+## Project Scope
 
-## Scope
-
-Natural language drawing command:
+This package implements only the LangChain/LLM planner layer:
 
 ```text
-Draw a 10 cm square at the center of the board.
+natural language command -> ParsedGoal -> deterministic strokes -> primitive action JSON
 ```
 
-Becomes:
-
-```text
-structured drawing goal -> deterministic stroke geometry -> primitive action JSON
-```
+It outputs robot-level primitive action JSON. It does **not** compute robot
+motion, joint angles, IK, FK, Jacobians, Isaac Sim commands, trajectories, or
+fake robot execution results.
 
 The downstream robot/kinematics module owns frame transforms, trajectory
-sampling, IK, Jacobian control, and Isaac Sim execution.
+sampling, IK/Jacobian control, and Isaac Sim execution.
 
-## Install
-
-```bash
-python -m pip install -e ".[dev]"
-```
-
-The live parser reads the API key only from `OPENAI_API_KEY`. Do not place the
-key in this repository.
+## Installation
 
 ```bash
-export OPENAI_API_KEY=...
-export OPENAI_MODEL=gpt-5-nano
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-If `OPENAI_MODEL` is omitted, the default is `gpt-5-nano`.
+## API Key Setup
 
-## CLI
-
-Use `zsh -ic` for live API calls so `~/.zshrc` can load the key:
+The live parser reads the API key from `OPENAI_API_KEY`. Do not put raw API keys
+in this repository.
 
 ```bash
-zsh -ic 'robot-drawing-plan "draw a 10 cm square at the center" --out plan.json'
+export OPENAI_API_KEY="..."
+export OPENAI_MODEL="gpt-5-nano"
 ```
 
-For development and tests, `--no-api` uses a small deterministic demo parser and
-does not call OpenAI:
+If `OPENAI_MODEL` is omitted, the default model is `gpt-5-nano`.
+
+If the key is stored in `~/.zshrc`, run the CLI through zsh when needed:
 
 ```bash
-python -m robot_drawing_planner.cli "Draw a circle with radius 5 cm" --no-api --out outputs/circle.json --pretty
+zsh -ic 'robot-drawing-plan "Draw a circle with radius 5 cm" --pretty'
 ```
 
-The CLI writes a JSON plan and does not execute the robot.
+## CLI Examples
 
-## Supported Goals
+Live LangChain/OpenAI mode:
 
-- Shapes: `circle`, `square`, `triangle`
-- Letters: `A`, `H`, `L`, `T`, `O`
-- Units: `m`, `cm`, `mm`
-- Board frame: 2D board coordinates in meters, origin at board center
+```bash
+zsh -ic 'robot-drawing-plan "중앙에 반지름 5cm짜리 원을 그려줘" --pretty --out outputs/circle_plan.json'
+```
 
-## Primitive Actions
+Development/demo mode without OpenAI:
 
-The handoff JSON contains only these primitive actions:
+```bash
+python -m robot_drawing_planner.cli "중앙에 한 변 10cm짜리 네모를 그려줘" --no-api --pretty --out examples/square_plan.json
+```
 
-- `move_to_start`
-- `align_pen_orientation`
-- `pen_down`
-- `draw_line`
-- `draw_arc`
-- `pen_up`
+Use `--out-only` to write only to a file without printing JSON to stdout.
 
-Example shape of the handoff:
+## Output Schema
+
+Shortened output example:
 
 ```json
 {
   "schema_version": "1.0",
-  "coordinate_frame": "drawing_board_2d_m",
-  "board": {
-    "width_m": 0.4,
-    "height_m": 0.3,
-    "origin": "center"
-  },
+  "source_command": "Draw a circle with radius 5 cm",
   "goal": {
-    "kind": "square",
-    "letter": null,
+    "shape_type": "circle",
+    "center": {"x": 0.0, "y": 0.0, "unit": "m"},
+    "radius_m": 0.05,
+    "side_length_m": null,
     "size_m": 0.1,
-    "center": {
-      "x_m": 0.0,
-      "y_m": 0.0
-    }
+    "orientation_rad": 0.0,
+    "letter": null,
+    "frame": "board",
+    "assumptions": [],
+    "warnings": [
+      "robot reachability and IK feasibility are not checked by the LangChain planner"
+    ]
   },
-  "actions": []
+  "strokes": [
+    {
+      "type": "arc",
+      "stroke_id": "stroke_001",
+      "center": {"x": 0.0, "y": 0.0, "unit": "m"},
+      "radius_m": 0.05,
+      "start_angle_rad": 0.0,
+      "end_angle_rad": 6.283185307179586,
+      "direction": "ccw"
+    }
+  ],
+  "actions": [
+    {
+      "name": "move_to_start",
+      "frame": "board",
+      "stroke_id": "stroke_001",
+      "params": {
+        "target": {"x": 0.05, "y": 0.0, "z": 0.03, "unit": "m"},
+        "hover_height_m": 0.03,
+        "note": "free-space move; kinematics module converts board frame to base frame"
+      }
+    }
+  ],
+  "diagnostics": {
+    "validation_ok": true,
+    "assumptions": [],
+    "warnings": [],
+    "errors": [],
+    "requires_robot_feasibility_check": true,
+    "note": "This planner does not compute IK, joint angles, Jacobians, or Isaac Sim commands."
+  }
 }
 ```
 
-## Validation
+Primitive action names are:
 
-The planner validates:
+- `move_to_start`: free-space move to a hover point above the first drawing point.
+- `align_pen_orientation`: symbolic orientation constraint normal to the board.
+- `pen_down`: approach the board drawing surface.
+- `draw_line`: line segment geometry in board-frame meters.
+- `draw_arc`: circular arc geometry in board-frame meters/radians.
+- `pen_up`: lift the pen after a stroke or contour.
 
-- supported shape
-- positive size
-- supported unit conversion
-- board boundary containment
-- unsupported letters
-- absence of low-level robot fields such as IK, FK, Jacobian, joint angles,
-  trajectories, or Isaac Sim commands
+`params` contains only planner-level geometric parameters and hints. It does not
+contain IK solutions, joint commands, robot trajectories, or Isaac Sim commands.
+
+## Handoff To Kinematics Teammate
+
+- Board frame coordinates are in meters.
+- Board frame origin is at the board center.
+- The kinematics module must convert board frame coordinates to robot base frame.
+- The kinematics module must handle the pen tip offset from the end-effector.
+- The kinematics module must interpolate Cartesian waypoints for line and arc actions.
+- The kinematics module must compute IK/Jacobian control and any robot feasibility checks.
+- This planner only provides symbolic primitive actions and geometric parameters.
+
+## Supported Shapes
+
+- `circle`
+- `square`
+- `triangle`
+- Letters: `A`, `H`, `L`, `T`, `O`
 
 ## Tests
 
-Unit tests use fakes/mocks and do not call the live OpenAI API:
+Unit tests use fakes/mocks and do not require the live OpenAI API:
 
 ```bash
 pytest -q
 ```
 
-Live API smoke testing is intentionally separate and skipped by default. Run it
-only through zsh when `OPENAI_API_KEY` is exported in the user's zsh
-environment:
+## Live Smoke Test
+
+Run through zsh when `OPENAI_API_KEY` is exported in `~/.zshrc`:
 
 ```bash
-zsh -ic 'RUN_LIVE_OPENAI_SMOKE=1 pytest -q -m live'
+zsh -ic 'robot-drawing-plan "중앙에 반지름 5cm짜리 원을 그려줘" --pretty'
 ```
+
