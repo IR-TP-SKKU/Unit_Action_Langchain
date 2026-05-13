@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from robot_drawing_planner.config import DEFAULT_CONFIG, PlannerConfig
 from robot_drawing_planner.geometry import generate_strokes, stroke_end_point, stroke_start_point
 from robot_drawing_planner.llm_client import Invokable, parse_goal
 from robot_drawing_planner.schemas import (
@@ -14,9 +15,11 @@ from robot_drawing_planner.schemas import (
     Stroke,
 )
 from robot_drawing_planner.validators import (
+    PlannerValidationError,
     normalize_goal,
+    validate_normalized_goal,
     validate_no_low_level_robot_fields,
-    validate_strokes_within_board,
+    validate_strokes_inside_board,
 )
 
 
@@ -34,20 +37,35 @@ def plan_from_text(
 def plan_from_goal(parsed: ParsedGoal, board: Board | None = None) -> DrawingPlan:
     """Return a primitive action plan from an already parsed drawing goal."""
 
-    drawing_board = board or Board()
-    goal = normalize_goal(parsed)
+    config = _config_from_board(board)
+    goal = normalize_goal(parsed, config)
+    goal_report = validate_normalized_goal(goal, config)
+    if not goal_report.ok:
+        raise PlannerValidationError("validation failed: " + "; ".join(goal_report.errors))
     strokes = generate_strokes(goal)
-    validate_strokes_within_board(strokes, drawing_board)
+    stroke_report = validate_strokes_inside_board(strokes, config)
+    if not stroke_report.ok:
+        raise PlannerValidationError("validation failed: " + "; ".join(stroke_report.errors))
     actions = strokes_to_actions(strokes)
     plan = DrawingPlan(
         source_command=parsed.raw_command,
         goal=goal,
         strokes=strokes,
         actions=actions,
-        diagnostics={"board": drawing_board.model_dump(mode="json")},
+        diagnostics={
+            "config": config.model_dump(mode="json"),
+            "goal_validation": goal_report.model_dump(mode="json"),
+            "stroke_validation": stroke_report.model_dump(mode="json"),
+        },
     )
     validate_no_low_level_robot_fields(plan.model_dump(mode="json"))
     return plan
+
+
+def _config_from_board(board: Board | None) -> PlannerConfig:
+    if board is None:
+        return DEFAULT_CONFIG
+    return PlannerConfig(board_width_m=board.width_m, board_height_m=board.height_m)
 
 
 def strokes_to_actions(strokes: list[Stroke]) -> list[PrimitiveAction]:
@@ -108,4 +126,3 @@ def strokes_to_actions(strokes: list[Stroke]) -> list[PrimitiveAction]:
             PrimitiveAction(name="pen_up", stroke_id=stroke.stroke_id, params={})
         )
     return actions
-

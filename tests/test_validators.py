@@ -3,10 +3,10 @@ import math
 import pytest
 from pydantic import ValidationError
 
+from robot_drawing_planner.config import PlannerConfig
 from robot_drawing_planner.geometry import generate_strokes
 from robot_drawing_planner.schemas import (
     ArcStroke,
-    Board,
     DrawingPlan,
     LineStroke,
     Measurement,
@@ -18,11 +18,16 @@ from robot_drawing_planner.schemas import (
     ValidationErrorReport,
 )
 from robot_drawing_planner.validators import (
+    IK_FEASIBILITY_WARNING,
     PlannerValidationError,
     normalize_goal,
+    validate_normalized_goal,
     validate_no_low_level_robot_fields,
-    validate_strokes_within_board,
+    validate_strokes_inside_board,
 )
+
+
+CONFIG = PlannerConfig()
 
 
 def test_instantiates_every_schema_model():
@@ -101,39 +106,100 @@ def test_normalize_goal_rejects_unsupported_letter():
                 letter="B",
                 size=Measurement(value=5, unit="cm"),
                 raw_command="draw B",
-            )
+            ),
+            CONFIG,
         )
 
 
-def test_normalize_goal_converts_units():
+def test_missing_center_uses_default_center_assumption():
     goal = normalize_goal(
         ParsedGoal(
             shape_type="circle",
-            center=Point2D(x=0.10, y=-0.05),
-            radius=Measurement(value=50, unit="mm"),
             raw_command="draw a circle",
-        )
+        ),
+        CONFIG,
     )
-    assert goal.radius_m == pytest.approx(0.05)
+    assert goal.center == CONFIG.default_center
+    assert "center was not specified; default board center was used" in goal.assumptions
+
+
+def test_normalize_goal_converts_cm_to_m():
+    goal = normalize_goal(
+        ParsedGoal(
+            shape_type="square",
+            center=Point2D(x=0.10, y=-0.05),
+            side_length=Measurement(value=10, unit="cm"),
+            raw_command="draw a square",
+        ),
+        CONFIG,
+    )
     assert goal.size_m == pytest.approx(0.10)
+    assert goal.side_length_m == pytest.approx(0.10)
     assert goal.center.x == pytest.approx(0.10)
     assert goal.center.y == pytest.approx(-0.05)
 
 
-def test_board_boundary_check_rejects_large_square():
+def test_negative_size_error():
+    parsed = ParsedGoal.model_construct(
+        shape_type="square",
+        center=Point2D(x=0.0, y=0.0),
+        side_length=Measurement.model_construct(value=-5, unit="cm"),
+        size=None,
+        radius=None,
+        orientation_deg=0.0,
+        letter=None,
+        position_hint=None,
+        raw_command="draw a square",
+    )
+    with pytest.raises(PlannerValidationError, match="positive"):
+        normalize_goal(parsed, CONFIG)
+
+
+def test_board_boundary_violation_report_says_validation_failed():
     goal = normalize_goal(
         ParsedGoal(
             shape_type="square",
             side_length=Measurement(value=50, unit="cm"),
             raw_command="draw a square",
-        )
+        ),
+        CONFIG,
     )
     strokes = generate_strokes(goal)
-    with pytest.raises(PlannerValidationError, match="board boundaries"):
-        validate_strokes_within_board(strokes, Board(width_m=0.40, height_m=0.30))
+    report = validate_strokes_inside_board(strokes, CONFIG)
+    assert report.ok is False
+    assert any("validation failed" in error for error in report.errors)
+
+
+def test_ik_feasibility_warning_exists():
+    goal = normalize_goal(
+        ParsedGoal(shape_type="circle", raw_command="draw a circle"),
+        CONFIG,
+    )
+    goal_report = validate_normalized_goal(goal, CONFIG)
+    strokes_report = validate_strokes_inside_board(generate_strokes(goal), CONFIG)
+    assert IK_FEASIBILITY_WARNING in goal.warnings
+    assert IK_FEASIBILITY_WARNING in goal_report.warnings
+    assert IK_FEASIBILITY_WARNING in strokes_report.warnings
+
+
+def test_validate_normalized_goal_reports_negative_constructed_radius():
+    goal = NormalizedGoal.model_construct(
+        shape_type="circle",
+        center=Point2D(x=0.0, y=0.0),
+        radius_m=-0.01,
+        side_length_m=None,
+        size_m=None,
+        orientation_rad=0.0,
+        letter=None,
+        frame="board",
+        assumptions=[],
+        warnings=[],
+    )
+    report = validate_normalized_goal(goal, CONFIG)
+    assert report.ok is False
+    assert any("positive" in error for error in report.errors)
 
 
 def test_no_low_level_robot_fields_rejects_ik_claims():
     with pytest.raises(PlannerValidationError, match="outside planner scope"):
         validate_no_low_level_robot_fields({"actions": [{"ik": "solved"}]})
-
