@@ -47,6 +47,9 @@ class PlannerValidationError(ValueError):
 def normalize_goal(parsed: ParsedGoal, config: PlannerConfig) -> NormalizedGoal:
     """Normalize a parsed goal to planner-level board units."""
 
+    if parsed.shape_type not in {"circle", "square", "triangle", "letter"}:
+        raise PlannerValidationError(f"Unsupported shape_type '{parsed.shape_type}'.")
+
     assumptions: list[str] = []
     warnings = [IK_FEASIBILITY_WARNING]
 
@@ -266,4 +269,3 @@ def _walk_mapping(payload: Any) -> list[tuple[str, Any]]:
         for value in payload:
             items.extend(_walk_mapping(value))
     return items
-
