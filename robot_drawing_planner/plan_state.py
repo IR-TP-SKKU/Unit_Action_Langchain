@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from robot_drawing_planner.config import PlannerConfig
 from robot_drawing_planner.schemas import (
     ArcStroke,
     Direction,
@@ -33,21 +34,29 @@ class PlanBuilder:
     strokes: list[Stroke] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    failed_calls: list[str] = field(default_factory=list)
     finished: bool = False
     frame: Literal["board"] = "board"
+    config: PlannerConfig = field(default_factory=PlannerConfig)
 
     @classmethod
-    def begin_plan(cls, source_command: str) -> "PlanBuilder":
+    def begin_plan(
+        cls,
+        source_command: str,
+        config: PlannerConfig | None = None,
+    ) -> "PlanBuilder":
         """Create a fresh plan-builder state for a user command."""
 
-        return cls(source_command=source_command)
+        return cls(source_command=source_command, config=config or PlannerConfig())
 
     def move_to_start(self, x: float, y: float) -> dict[str, Any]:
         """Append a symbolic move_to_start primitive if the pen is up."""
 
         if self.pen_state != "up":
-            return self._record_error("move_to_start requires pen_state == 'up'.")
+            return self._record_failed_call("move_to_start requires pen_state == 'up'.")
         target = Point2D(x=x, y=y)
+        if not self._point_inside_board(target):
+            return self._record_failed_call(self._point_outside_message(target, "move_to_start"))
         self.current_position = target
         self.actions.append(
             PrimitiveAction(
@@ -84,9 +93,9 @@ class PlanBuilder:
         """Append a pen_down primitive at the current board position."""
 
         if self.current_position is None:
-            return self._record_error("pen_down requires current_position is not None.")
+            return self._record_failed_call("pen_down requires current_position is not None.")
         if self.pen_state == "down":
-            return self._record_error("pen_down requires pen_state == 'up'.")
+            return self._record_failed_call("pen_down requires pen_state == 'up'.")
         self.pen_state = "down"
         self.actions.append(
             PrimitiveAction(
@@ -105,11 +114,13 @@ class PlanBuilder:
         """Append a draw_line primitive from current_position to the given point."""
 
         if self.pen_state != "down":
-            return self._record_error("draw_line_to requires pen_state == 'down'.")
+            return self._record_failed_call("draw_line_to requires pen_state == 'down'.")
         if self.current_position is None:
-            return self._record_error("draw_line_to requires current_position is not None.")
+            return self._record_failed_call("draw_line_to requires current_position is not None.")
         start = self.current_position
         end = Point2D(x=x, y=y)
+        if not self._point_inside_board(end):
+            return self._record_failed_call(self._point_outside_message(end, "draw_line_to"))
         stroke_id = self._next_stroke_id()
         stroke = LineStroke(stroke_id=stroke_id, start=start, end=end)
         self.strokes.append(stroke)
@@ -144,10 +155,14 @@ class PlanBuilder:
         """
 
         if self.pen_state != "down":
-            return self._record_error("draw_arc requires pen_state == 'down'.")
+            return self._record_failed_call("draw_arc requires pen_state == 'down'.")
         if radius_m <= 0:
-            return self._record_error("draw_arc requires radius_m > 0.")
+            return self._record_failed_call("draw_arc requires radius_m > 0.")
         center = Point2D(x=center_x, y=center_y)
+        if not self._arc_inside_board(center, radius_m):
+            return self._record_failed_call(
+                self._arc_outside_message(center, radius_m, "draw_arc")
+            )
         stroke_id = self._next_stroke_id()
         stroke = ArcStroke(
             stroke_id=stroke_id,
@@ -180,7 +195,7 @@ class PlanBuilder:
         """Append a pen_up primitive."""
 
         if self.pen_state != "down":
-            return self._record_error("pen_up requires pen_state == 'down'.")
+            return self._record_failed_call("pen_up requires pen_state == 'down'.")
         self.pen_state = "up"
         self.actions.append(
             PrimitiveAction(
@@ -206,6 +221,7 @@ class PlanBuilder:
             "number_of_strokes": len(self.strokes),
             "warnings": list(self.warnings),
             "errors": list(self.errors),
+            "failed_calls": list(self.failed_calls),
             "finished": self.finished,
         }
 
@@ -213,7 +229,9 @@ class PlanBuilder:
         """Mark the plan complete if at least one drawable stroke exists."""
 
         if not self.strokes:
-            return self._record_error("finish_plan requires at least one drawable stroke.")
+            return self._record_failed_call(
+                "finish_plan requires at least one drawable stroke."
+            )
         if self.pen_state == "down":
             self.warnings.append("finish_plan called while pen is still down.")
         self.finished = True
@@ -222,6 +240,45 @@ class PlanBuilder:
     def _record_error(self, message: str) -> dict[str, Any]:
         self.errors.append(message)
         return self.check_plan()
+
+    def _record_failed_call(self, message: str) -> dict[str, Any]:
+        self.failed_calls.append(message)
+        return self.check_plan()
+
+    def _point_inside_board(self, point: Point2D) -> bool:
+        x_min, x_max, y_min, y_max = self._board_bounds()
+        return x_min <= point.x <= x_max and y_min <= point.y <= y_max
+
+    def _arc_inside_board(self, center: Point2D, radius_m: float) -> bool:
+        x_min, x_max, y_min, y_max = self._board_bounds()
+        return (
+            center.x - radius_m >= x_min
+            and center.x + radius_m <= x_max
+            and center.y - radius_m >= y_min
+            and center.y + radius_m <= y_max
+        )
+
+    def _board_bounds(self) -> tuple[float, float, float, float]:
+        half_width = self.config.board_width_m / 2.0
+        half_height = self.config.board_height_m / 2.0
+        return -half_width, half_width, -half_height, half_height
+
+    def _point_outside_message(self, point: Point2D, tool_name: str) -> str:
+        x_min, x_max, y_min, y_max = self._board_bounds()
+        return (
+            f"{tool_name} target ({point.x}, {point.y}) is outside the board bounds: "
+            f"x must be in [{x_min}, {x_max}], y must be in [{y_min}, {y_max}]."
+        )
+
+    def _arc_outside_message(self, center: Point2D, radius_m: float, tool_name: str) -> str:
+        x_min, x_max, y_min, y_max = self._board_bounds()
+        return (
+            f"{tool_name} arc bounding box is outside the board bounds: "
+            f"center=({center.x}, {center.y}), radius_m={radius_m}; "
+            f"x range [{center.x - radius_m}, {center.x + radius_m}] must fit in "
+            f"[{x_min}, {x_max}], y range [{center.y - radius_m}, {center.y + radius_m}] "
+            f"must fit in [{y_min}, {y_max}]."
+        )
 
     def _next_stroke_id(self) -> str:
         return f"stroke_{len(self.strokes) + 1:03d}"
@@ -242,4 +299,3 @@ class PlanBuilder:
             x=stroke.center.x + stroke.radius_m * math.cos(stroke.end_angle_rad),
             y=stroke.center.y + stroke.radius_m * math.sin(stroke.end_angle_rad),
         )
-

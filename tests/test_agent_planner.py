@@ -176,6 +176,63 @@ def test_fake_llm_repairs_invalid_draw_line_before_pen_down_after_feedback():
     )
 
 
+def test_fake_llm_repairs_out_of_board_line_after_feedback():
+    llm = FakeToolCallingLLM(
+        [
+            [tc("begin_plan", {"source_command": "repair outside line"})],
+            [tc("move_to_start", {"x": 0.0, "y": 0.0})],
+            [tc("align_pen_orientation")],
+            [tc("pen_down")],
+            [tc("draw_line_to", {"x": 2.0, "y": 0.0})],
+            [tc("draw_line_to", {"x": 0.05, "y": 0.0})],
+            [tc("pen_up")],
+            [tc("check_plan")],
+            [tc("finish_plan")],
+        ]
+    )
+
+    plan = plan_drawing_agentic("repair outside line", llm=llm)
+
+    assert plan.diagnostics["validation_ok"] is True
+    assert plan.diagnostics["errors"] == []
+    assert any("outside the board bounds" in call for call in plan.diagnostics["failed_calls"])
+    assert [action.name for action in plan.actions] == [
+        "move_to_start",
+        "align_pen_orientation",
+        "pen_down",
+        "draw_line",
+        "pen_up",
+    ]
+    assert len(plan.strokes) == 1
+    assert plan.strokes[0].end.x == 0.05
+    assert any(
+        "outside the board bounds" in message.content
+        for call_messages in llm.calls
+        for message in call_messages
+        if hasattr(message, "content")
+    )
+
+
+def test_unrepaired_out_of_board_attempt_exceeds_max_steps_with_empty_actions():
+    llm = FakeToolCallingLLM(
+        [
+            [tc("begin_plan", {"source_command": "never repair outside line"})],
+            [tc("move_to_start", {"x": 0.0, "y": 0.0})],
+            [tc("pen_down")],
+            [tc("draw_line_to", {"x": 2.0, "y": 0.0})],
+            [tc("draw_line_to", {"x": 2.0, "y": 0.0})],
+        ]
+    )
+
+    plan = plan_drawing_agentic("never repair outside line", llm=llm, max_steps=5)
+
+    assert plan.actions == []
+    assert plan.strokes == []
+    assert plan.diagnostics["validation_ok"] is False
+    assert any("max_steps 5 exceeded" in error for error in plan.diagnostics["errors"])
+    assert any("outside the board bounds" in call for call in plan.diagnostics["failed_calls"])
+
+
 def test_max_steps_failure_returns_diagnostics_error():
     llm = FakeToolCallingLLM([[tc("begin_plan", {"source_command": "never finish"})]])
 
@@ -210,4 +267,3 @@ def test_agentic_output_actions_come_from_tool_calls_not_template_compiler():
     assert len(plan.strokes) == 1
     assert plan.strokes[0].start.x == -0.03
     assert plan.strokes[0].end.x == 0.07
-

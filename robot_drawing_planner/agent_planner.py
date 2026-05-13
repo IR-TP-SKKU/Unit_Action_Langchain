@@ -41,7 +41,7 @@ def plan_drawing_agentic(
     """Plan by letting an LLM sequentially call symbolic unit-action tools."""
 
     planner_config = config or DEFAULT_CONFIG
-    toolset = UnitActionToolset()
+    toolset = UnitActionToolset(config=planner_config)
     tools = toolset.tools()
     model = llm if llm is not None else get_llm()
     bound_model = model.bind_tools(tools) if hasattr(model, "bind_tools") else model
@@ -133,6 +133,7 @@ def _execute_tool_call(
             "action_count": 0,
             "warnings": [],
             "errors": [f"Unknown unit-action tool '{name}'."],
+            "failed_calls": [f"Unknown unit-action tool '{name}'."],
         }
     try:
         return tool.invoke(args)
@@ -145,6 +146,7 @@ def _execute_tool_call(
             "action_count": 0,
             "warnings": [],
             "errors": [str(exc)],
+            "failed_calls": [str(exc)],
         }
 
 
@@ -193,11 +195,13 @@ def _drawing_plan_from_toolset(
         actions = []
         builder_errors: list[str] = []
         builder_warnings: list[str] = []
+        builder_failed_calls: list[str] = []
     else:
         strokes = list(builder.strokes)
         actions = [] if force_empty_actions else list(builder.actions)
         builder_errors = list(builder.errors)
         builder_warnings = list(builder.warnings)
+        builder_failed_calls = list(builder.failed_calls)
 
     errors = [*builder_errors, *extra_errors]
     warnings = [*builder_warnings, *extra_warnings]
@@ -214,6 +218,7 @@ def _drawing_plan_from_toolset(
             ],
             "warnings": warnings,
             "errors": errors,
+            "failed_calls": builder_failed_calls,
             "requires_robot_feasibility_check": True,
             "note": PLANNER_SCOPE_NOTE,
         },
@@ -232,4 +237,3 @@ def _agentic_goal(config: PlannerConfig, warnings: list[str]) -> NormalizedGoal:
         assumptions=["Agentic mode does not use deterministic ParsedGoal templates."],
         warnings=warnings,
     )
-

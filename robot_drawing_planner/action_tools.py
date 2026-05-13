@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from langchain_core.tools import StructuredTool
 
+from robot_drawing_planner.config import PlannerConfig
 from robot_drawing_planner.plan_state import PlanBuilder
 
 TOOL_SCOPE_NOTE = (
@@ -18,7 +19,8 @@ TOOL_SCOPE_NOTE = (
 class UnitActionToolset:
     """Stateful LangChain tool wrapper for agentic unit-action planning."""
 
-    def __init__(self) -> None:
+    def __init__(self, config: PlannerConfig | None = None) -> None:
+        self.config = config or PlannerConfig()
         self.builder: PlanBuilder | None = None
         self._checked_since_last_mutation = False
 
@@ -103,7 +105,7 @@ class UnitActionToolset:
     def begin_plan(self, source_command: str) -> dict[str, Any]:
         """Begin a fresh PlanBuilder state."""
 
-        self.builder = PlanBuilder.begin_plan(source_command)
+        self.builder = PlanBuilder.begin_plan(source_command, config=self.config)
         self._checked_since_last_mutation = False
         return self._feedback(True, "Plan started.")
 
@@ -113,10 +115,15 @@ class UnitActionToolset:
         builder = self._builder_or_none()
         if builder is None:
             return self._feedback(False, "begin_plan must be called before move_to_start.")
-        before = len(builder.errors)
+        before_errors = len(builder.errors)
+        before_failed = len(builder.failed_calls)
         builder.move_to_start(x, y)
         self._checked_since_last_mutation = False
-        return self._feedback_from_error_delta(before, "move_to_start appended.")
+        return self._feedback_from_error_delta(
+            before_errors,
+            before_failed,
+            "move_to_start appended.",
+        )
 
     def align_pen_orientation(self) -> dict[str, Any]:
         """Append align_pen_orientation."""
@@ -124,10 +131,15 @@ class UnitActionToolset:
         builder = self._builder_or_none()
         if builder is None:
             return self._feedback(False, "begin_plan must be called before align_pen_orientation.")
-        before = len(builder.errors)
+        before_errors = len(builder.errors)
+        before_failed = len(builder.failed_calls)
         builder.align_pen_orientation()
         self._checked_since_last_mutation = False
-        return self._feedback_from_error_delta(before, "align_pen_orientation appended.")
+        return self._feedback_from_error_delta(
+            before_errors,
+            before_failed,
+            "align_pen_orientation appended.",
+        )
 
     def pen_down(self) -> dict[str, Any]:
         """Append pen_down."""
@@ -135,10 +147,15 @@ class UnitActionToolset:
         builder = self._builder_or_none()
         if builder is None:
             return self._feedback(False, "begin_plan must be called before pen_down.")
-        before = len(builder.errors)
+        before_errors = len(builder.errors)
+        before_failed = len(builder.failed_calls)
         builder.pen_down()
         self._checked_since_last_mutation = False
-        return self._feedback_from_error_delta(before, "pen_down appended.")
+        return self._feedback_from_error_delta(
+            before_errors,
+            before_failed,
+            "pen_down appended.",
+        )
 
     def draw_line_to(self, x: float, y: float) -> dict[str, Any]:
         """Append draw_line to board-frame x/y meters."""
@@ -146,10 +163,15 @@ class UnitActionToolset:
         builder = self._builder_or_none()
         if builder is None:
             return self._feedback(False, "begin_plan must be called before draw_line_to.")
-        before = len(builder.errors)
+        before_errors = len(builder.errors)
+        before_failed = len(builder.failed_calls)
         builder.draw_line_to(x, y)
         self._checked_since_last_mutation = False
-        return self._feedback_from_error_delta(before, "draw_line appended.")
+        return self._feedback_from_error_delta(
+            before_errors,
+            before_failed,
+            "draw_line appended.",
+        )
 
     def draw_arc(
         self,
@@ -165,7 +187,8 @@ class UnitActionToolset:
         builder = self._builder_or_none()
         if builder is None:
             return self._feedback(False, "begin_plan must be called before draw_arc.")
-        before = len(builder.errors)
+        before_errors = len(builder.errors)
+        before_failed = len(builder.failed_calls)
         builder.draw_arc(
             center_x=center_x,
             center_y=center_y,
@@ -175,7 +198,11 @@ class UnitActionToolset:
             direction=direction,
         )
         self._checked_since_last_mutation = False
-        return self._feedback_from_error_delta(before, "draw_arc appended.")
+        return self._feedback_from_error_delta(
+            before_errors,
+            before_failed,
+            "draw_arc appended.",
+        )
 
     def pen_up(self) -> dict[str, Any]:
         """Append pen_up."""
@@ -183,10 +210,15 @@ class UnitActionToolset:
         builder = self._builder_or_none()
         if builder is None:
             return self._feedback(False, "begin_plan must be called before pen_up.")
-        before = len(builder.errors)
+        before_errors = len(builder.errors)
+        before_failed = len(builder.failed_calls)
         builder.pen_up()
         self._checked_since_last_mutation = False
-        return self._feedback_from_error_delta(before, "pen_up appended.")
+        return self._feedback_from_error_delta(
+            before_errors,
+            before_failed,
+            "pen_up appended.",
+        )
 
     def check_plan(self) -> dict[str, Any]:
         """Return concise structured feedback for current PlanBuilder state."""
@@ -208,12 +240,16 @@ class UnitActionToolset:
                 False,
                 "finish_plan requires check_plan to be called after the last plan change.",
             )
-        before = len(builder.errors)
+        before_errors = len(builder.errors)
+        before_failed = len(builder.failed_calls)
         builder.finish_plan()
-        new_errors = builder.errors[before:]
-        ok = not new_errors and not builder.errors
+        new_errors = [
+            *builder.errors[before_errors:],
+            *builder.failed_calls[before_failed:],
+        ]
+        ok = not new_errors and not builder.errors and builder.finished
         message = "Plan finished." if ok else (new_errors[-1] if new_errors else builder.errors[-1])
-        feedback = self._feedback(ok, message)
+        feedback = self._feedback(ok, message, visible_errors=new_errors or None)
         feedback["plan"] = self._plan_payload()
         return feedback
 
@@ -231,14 +267,27 @@ class UnitActionToolset:
             raise RuntimeError("begin_plan must be called before unit-action tools.")
         return self.builder
 
-    def _feedback_from_error_delta(self, previous_error_count: int, success_message: str) -> dict[str, Any]:
+    def _feedback_from_error_delta(
+        self,
+        previous_error_count: int,
+        previous_failed_count: int,
+        success_message: str,
+    ) -> dict[str, Any]:
         builder = self._require_builder()
-        new_errors = builder.errors[previous_error_count:]
+        new_errors = [
+            *builder.errors[previous_error_count:],
+            *builder.failed_calls[previous_failed_count:],
+        ]
         if new_errors:
-            return self._feedback(False, new_errors[-1])
+            return self._feedback(False, new_errors[-1], visible_errors=new_errors)
         return self._feedback(True, success_message)
 
-    def _feedback(self, ok: bool, message: str) -> dict[str, Any]:
+    def _feedback(
+        self,
+        ok: bool,
+        message: str,
+        visible_errors: list[str] | None = None,
+    ) -> dict[str, Any]:
         builder = self.builder
         if builder is None:
             return {
@@ -248,7 +297,8 @@ class UnitActionToolset:
                 "pen_state": "up",
                 "action_count": 0,
                 "warnings": [],
-                "errors": [],
+                "errors": visible_errors or ([message] if not ok else []),
+                "failed_calls": [],
             }
         summary = builder.check_plan()
         return {
@@ -258,7 +308,8 @@ class UnitActionToolset:
             "pen_state": summary["pen_state"],
             "action_count": summary["number_of_actions"],
             "warnings": summary["warnings"],
-            "errors": summary["errors"],
+            "errors": visible_errors if visible_errors is not None else summary["errors"],
+            "failed_calls": summary["failed_calls"],
         }
 
     def _plan_payload(self) -> dict[str, Any]:
@@ -273,6 +324,7 @@ class UnitActionToolset:
             "diagnostics": {
                 "warnings": list(builder.warnings),
                 "errors": list(builder.errors),
+                "failed_calls": list(builder.failed_calls),
                 "note": (
                     "This agentic unit-action planner produces symbolic primitive actions only; "
                     "it does not compute IK, FK, Jacobians, joint commands, trajectory samples, "
@@ -282,8 +334,10 @@ class UnitActionToolset:
         }
 
 
-def create_unit_action_tools() -> tuple[UnitActionToolset, list[StructuredTool]]:
+def create_unit_action_tools(
+    config: PlannerConfig | None = None,
+) -> tuple[UnitActionToolset, list[StructuredTool]]:
     """Create a stateful unit-action toolset and its LangChain tools."""
 
-    toolset = UnitActionToolset()
+    toolset = UnitActionToolset(config=config)
     return toolset, toolset.tools()

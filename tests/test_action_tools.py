@@ -53,6 +53,7 @@ def test_check_plan_returns_ok_true_for_valid_square():
     assert feedback["action_count"] == 8
     assert feedback["warnings"] == []
     assert feedback["errors"] == []
+    assert feedback["failed_calls"] == []
 
 
 def test_finish_plan_returns_serializable_plan_payload():
@@ -93,6 +94,88 @@ def test_invalid_pen_state_returns_ok_false():
     assert "draw_line_to requires pen_state == 'down'." == feedback["message"]
     assert feedback["action_count"] == 1
     assert feedback["errors"] == ["draw_line_to requires pen_state == 'down'."]
+    assert feedback["failed_calls"] == ["draw_line_to requires pen_state == 'down'."]
+
+
+def test_move_to_start_outside_board_returns_false_and_keeps_action_count_zero():
+    toolset = UnitActionToolset()
+    invoke(toolset, "begin_plan", {"source_command": "bad outside move"})
+
+    feedback = invoke(toolset, "move_to_start", {"x": 2.0, "y": 0.0})
+
+    assert feedback["ok"] is False
+    assert feedback["action_count"] == 0
+    assert "outside the board bounds" in feedback["message"]
+    assert any("outside the board bounds" in error for error in feedback["errors"])
+    assert toolset.builder is not None
+    assert toolset.builder.actions == []
+
+
+def test_draw_line_to_outside_board_returns_false_without_new_stroke():
+    toolset = UnitActionToolset()
+    invoke(toolset, "begin_plan", {"source_command": "bad outside line"})
+    invoke(toolset, "move_to_start", {"x": 0.0, "y": 0.0})
+    invoke(toolset, "pen_down")
+    assert toolset.builder is not None
+    stroke_count_before = len(toolset.builder.strokes)
+    action_count_before = len(toolset.builder.actions)
+
+    feedback = invoke(toolset, "draw_line_to", {"x": 2.0, "y": 0.0})
+
+    assert feedback["ok"] is False
+    assert len(toolset.builder.strokes) == stroke_count_before
+    assert len(toolset.builder.actions) == action_count_before
+    assert any("outside the board bounds" in error for error in feedback["errors"])
+
+
+def test_draw_arc_outside_board_returns_false_without_new_stroke():
+    toolset = UnitActionToolset()
+    invoke(toolset, "begin_plan", {"source_command": "bad outside arc"})
+    invoke(toolset, "move_to_start", {"x": 0.0, "y": 0.0})
+    invoke(toolset, "pen_down")
+    assert toolset.builder is not None
+    stroke_count_before = len(toolset.builder.strokes)
+    action_count_before = len(toolset.builder.actions)
+
+    feedback = invoke(
+        toolset,
+        "draw_arc",
+        {
+            "center_x": 0.24,
+            "center_y": 0.0,
+            "radius_m": 0.05,
+            "start_angle_rad": 0.0,
+            "end_angle_rad": 1.0,
+            "direction": "ccw",
+        },
+    )
+
+    assert feedback["ok"] is False
+    assert len(toolset.builder.strokes) == stroke_count_before
+    assert len(toolset.builder.actions) == action_count_before
+    assert any("arc bounding box is outside" in error for error in feedback["errors"])
+
+
+def test_repaired_out_of_board_attempt_can_finish_successfully():
+    toolset = UnitActionToolset()
+    invoke(toolset, "begin_plan", {"source_command": "repair outside line"})
+    invoke(toolset, "move_to_start", {"x": 0.0, "y": 0.0})
+    invoke(toolset, "pen_down")
+    failed = invoke(toolset, "draw_line_to", {"x": 2.0, "y": 0.0})
+    assert failed["ok"] is False
+
+    assert invoke(toolset, "draw_line_to", {"x": 0.05, "y": 0.0})["ok"] is True
+    assert invoke(toolset, "pen_up")["ok"] is True
+    checked = invoke(toolset, "check_plan")
+    assert checked["ok"] is True
+    assert checked["errors"] == []
+    assert checked["failed_calls"]
+
+    finished = invoke(toolset, "finish_plan")
+    assert finished["ok"] is True
+    assert finished["plan"]["finished"] is True
+    assert finished["plan"]["diagnostics"]["errors"] == []
+    assert finished["plan"]["diagnostics"]["failed_calls"]
 
 
 def test_tool_descriptions_are_explicit_about_scope():
@@ -106,4 +189,3 @@ def test_tool_descriptions_are_explicit_about_scope():
     assert "must call check_plan before finish_plan" in toolset.tool_by_name(
         "finish_plan"
     ).description
-
