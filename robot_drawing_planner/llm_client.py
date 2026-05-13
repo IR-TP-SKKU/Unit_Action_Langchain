@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+import os
+from typing import TYPE_CHECKING, Any, Protocol
 
 from robot_drawing_planner.config import (
+    DEFAULT_MODEL,
     DEFAULT_MAX_RETRIES,
     DEFAULT_TIMEOUT_SECONDS,
-    get_openai_model,
     require_openai_api_key,
 )
 from robot_drawing_planner.prompts import SYSTEM_PROMPT
 from robot_drawing_planner.schemas import ParsedGoal
+
+if TYPE_CHECKING:
+    from langchain_openai import ChatOpenAI
 
 
 class Invokable(Protocol):
@@ -21,35 +25,39 @@ class Invokable(Protocol):
         ...
 
 
-def build_chat_model() -> Any:
-    """Build a deterministic ChatOpenAI client for live structured parsing."""
+def get_llm(model_name: str | None = None) -> "ChatOpenAI":
+    """Build a deterministic ChatOpenAI client.
+
+    Model priority:
+    1. explicit model_name argument
+    2. OPENAI_MODEL environment variable
+    3. gpt-5-nano
+    """
 
     require_openai_api_key()
     from langchain_openai import ChatOpenAI
 
     return ChatOpenAI(
-        model=get_openai_model(),
+        model=model_name or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL,
         temperature=0,
         timeout=DEFAULT_TIMEOUT_SECONDS,
         max_retries=DEFAULT_MAX_RETRIES,
     )
 
 
-def build_structured_parser(llm: Any | None = None) -> Invokable:
-    """Return a LangChain runnable that emits ParsedGoal instances."""
-
-    chat_model = llm if llm is not None else build_chat_model()
-    return chat_model.with_structured_output(ParsedGoal, method="json_schema")
-
-
-def parse_goal(command: str, parser: Invokable | None = None) -> ParsedGoal:
-    """Parse a natural language command into a ParsedGoal."""
+def parse_command_with_llm(command: str, llm: Any | None = None) -> ParsedGoal:
+    """Parse a natural-language drawing command into a ParsedGoal."""
 
     if not command.strip():
         raise ValueError("Drawing command must not be empty.")
 
-    structured_parser = parser if parser is not None else build_structured_parser()
-    result = structured_parser.invoke(
+    model_or_fake = llm if llm is not None else get_llm()
+    if hasattr(model_or_fake, "with_structured_output"):
+        parser = model_or_fake.with_structured_output(ParsedGoal, method="json_schema")
+    else:
+        parser = model_or_fake
+
+    result = parser.invoke(
         [
             ("system", SYSTEM_PROMPT),
             ("human", command),
@@ -60,3 +68,22 @@ def parse_goal(command: str, parser: Invokable | None = None) -> ParsedGoal:
     if isinstance(result, dict) and "raw_command" not in result:
         result = {**result, "raw_command": command}
     return ParsedGoal.model_validate(result)
+
+
+def build_chat_model() -> "ChatOpenAI":
+    """Backward-compatible alias for get_llm()."""
+
+    return get_llm()
+
+
+def build_structured_parser(llm: Any | None = None) -> Invokable:
+    """Return a LangChain runnable that emits ParsedGoal instances."""
+
+    model_or_fake = llm if llm is not None else get_llm()
+    return model_or_fake.with_structured_output(ParsedGoal, method="json_schema")
+
+
+def parse_goal(command: str, parser: Invokable | None = None) -> ParsedGoal:
+    """Backward-compatible wrapper around parse_command_with_llm()."""
+
+    return parse_command_with_llm(command, llm=parser)
