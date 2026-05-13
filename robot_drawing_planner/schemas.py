@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal, TypeAlias, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-ShapeType: TypeAlias = Literal["circle", "square", "triangle", "letter"]
+ShapeType: TypeAlias = Literal["circle", "square", "triangle", "letter", "custom"]
 PrimitiveActionName: TypeAlias = Literal[
     "move_to_start",
     "align_pen_orientation",
@@ -194,4 +194,3 @@ class Board(StrictBaseModel):
     width_m: float = Field(default=0.40, gt=0, description="Board width in meters.")
     height_m: float = Field(default=0.30, gt=0, description="Board height in meters.")
     frame: FrameName = Field(default="board", description="Board frame name.")
-
