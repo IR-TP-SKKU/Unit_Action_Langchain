@@ -139,6 +139,74 @@ def test_normalize_goal_converts_cm_to_m():
     assert goal.center.y == pytest.approx(-0.05)
 
 
+def test_circle_size_is_interpreted_as_diameter():
+    goal = normalize_goal(
+        ParsedGoal(
+            shape_type="circle",
+            size=Measurement(value=20, unit="cm"),
+            raw_command="draw a 20cm diameter circle",
+        ),
+        CONFIG,
+    )
+
+    assert goal.radius_m == pytest.approx(0.10)
+    assert goal.size_m == pytest.approx(0.20)
+
+
+def test_circle_radius_wins_over_size_with_warning():
+    goal = normalize_goal(
+        ParsedGoal(
+            shape_type="circle",
+            radius=Measurement(value=5, unit="cm"),
+            size=Measurement(value=20, unit="cm"),
+            raw_command="draw a circle with radius and size",
+        ),
+        CONFIG,
+    )
+
+    assert goal.radius_m == pytest.approx(0.05)
+    assert any("radius and size" in warning for warning in goal.warnings)
+
+
+def test_square_and_triangle_size_is_interpreted_as_side_length():
+    square = normalize_goal(
+        ParsedGoal(
+            shape_type="square",
+            size=Measurement(value=20, unit="cm"),
+            raw_command="draw a 20cm square",
+        ),
+        CONFIG,
+    )
+    triangle = normalize_goal(
+        ParsedGoal(
+            shape_type="triangle",
+            size=Measurement(value=12, unit="cm"),
+            raw_command="draw a 12cm triangle",
+        ),
+        CONFIG,
+    )
+
+    assert square.side_length_m == pytest.approx(0.20)
+    assert square.size_m == pytest.approx(0.20)
+    assert triangle.side_length_m == pytest.approx(0.12)
+    assert triangle.size_m == pytest.approx(0.12)
+
+
+def test_side_length_wins_over_size_with_warning():
+    goal = normalize_goal(
+        ParsedGoal(
+            shape_type="square",
+            side_length=Measurement(value=10, unit="cm"),
+            size=Measurement(value=20, unit="cm"),
+            raw_command="draw a square with side length and size",
+        ),
+        CONFIG,
+    )
+
+    assert goal.side_length_m == pytest.approx(0.10)
+    assert any("side_length and size" in warning for warning in goal.warnings)
+
+
 def test_negative_size_error():
     parsed = ParsedGoal.model_construct(
         shape_type="square",

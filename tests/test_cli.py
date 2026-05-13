@@ -5,6 +5,15 @@ import pytest
 from robot_drawing_planner import cli
 
 
+def _run_no_api_payload(command: str, capsys):
+    result = cli.main([command, "--no-api"])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert captured.err == ""
+    return json.loads(captured.out)
+
+
 def test_cli_no_api_square_exits_zero_and_prints_valid_json(capsys):
     result = cli.main(["중앙에 한 변 10cm짜리 네모를 그려줘", "--no-api"])
     captured = capsys.readouterr()
@@ -15,6 +24,32 @@ def test_cli_no_api_square_exits_zero_and_prints_valid_json(capsys):
     assert payload["goal"]["shape_type"] == "square"
     assert payload["goal"]["side_length_m"] == 0.1
     assert payload["actions"][0]["name"] == "move_to_start"
+
+
+@pytest.mark.parametrize(
+    ("command", "goal_key", "expected"),
+    [
+        ("중앙에 한 변 20cm짜리 네모를 그려줘", "side_length_m", 0.20),
+        ("중앙에 반지름 8cm짜리 원을 그려줘", "radius_m", 0.08),
+        ("중앙에 크기 15cm인 글자 A를 써줘", "size_m", 0.15),
+        ("중앙에 한 변 0.12m짜리 세모를 그려줘", "side_length_m", 0.12),
+        ("중앙에 반지름 5mm짜리 원을 그려줘", "radius_m", 0.005),
+        ("중앙에 크기 20cm인 원을 그려줘", "radius_m", 0.10),
+        ("중앙에 지름 20cm인 원을 그려줘", "radius_m", 0.10),
+        ("Draw a circle with diameter 20 cm", "radius_m", 0.10),
+        ("중앙에 크기 20cm인 네모를 그려줘", "side_length_m", 0.20),
+        ("중앙에 크기 20cm인 세모를 그려줘", "side_length_m", 0.20),
+    ],
+)
+def test_cli_no_api_measurement_suffixes_and_size_semantics(
+    command,
+    goal_key,
+    expected,
+    capsys,
+):
+    payload = _run_no_api_payload(command, capsys)
+
+    assert payload["goal"][goal_key] == pytest.approx(expected)
 
 
 def test_cli_no_api_out_writes_file_and_prints_stdout(tmp_path, capsys):

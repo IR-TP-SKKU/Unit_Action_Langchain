@@ -111,9 +111,21 @@ def demo_parse_command(command: str) -> ParsedGoal:
     }
 
     if shape_type == "circle":
-        kwargs["radius"] = measurement or Measurement(value=5, unit="cm")
+        if measurement is None:
+            kwargs["radius"] = Measurement(value=5, unit="cm")
+        elif _mentions_radius(text):
+            kwargs["radius"] = measurement
+        elif _mentions_diameter_or_size(text):
+            kwargs["size"] = measurement
+        else:
+            kwargs["radius"] = measurement
     elif shape_type in {"square", "triangle"}:
-        kwargs["side_length"] = measurement or Measurement(value=10, unit="cm")
+        if measurement is None:
+            kwargs["side_length"] = Measurement(value=10, unit="cm")
+        elif _mentions_size(text) and not _mentions_side_length(text):
+            kwargs["size"] = measurement
+        else:
+            kwargs["side_length"] = measurement
     elif shape_type == "letter":
         kwargs["size"] = measurement or Measurement(value=10, unit="cm")
 
@@ -164,14 +176,42 @@ def _extract_position_hint(command: str) -> str | None:
 
 
 def _extract_measurement(command: str) -> Measurement | None:
-    match = re.search(r"(\d+(?:\.\d+)?)\s*(cm|mm|m)\b", command, re.IGNORECASE)
+    match = re.search(
+        r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>mm|cm|m)(?=$|[\s,.;:)\]]|[가-힣])",
+        command,
+        re.IGNORECASE,
+    )
     if not match:
         return None
-    value = float(match.group(1))
-    unit = match.group(2).lower()
+    value = float(match.group("value"))
+    unit = match.group("unit").lower()
     if unit not in {"m", "cm", "mm"}:
         return None
     return Measurement(value=value, unit=unit)
+
+
+def _mentions_radius(command: str) -> bool:
+    lowered = command.lower()
+    return "반지름" in command or "radius" in lowered
+
+
+def _mentions_diameter_or_size(command: str) -> bool:
+    lowered = command.lower()
+    return any(token in command for token in ["지름", "크기"]) or any(
+        token in lowered for token in ["diameter", "size"]
+    )
+
+
+def _mentions_side_length(command: str) -> bool:
+    lowered = command.lower()
+    return any(token in command for token in ["한 변", "변 길이"]) or any(
+        token in lowered for token in ["side length", "side"]
+    )
+
+
+def _mentions_size(command: str) -> bool:
+    lowered = command.lower()
+    return "크기" in command or "size" in lowered
 
 
 if __name__ == "__main__":

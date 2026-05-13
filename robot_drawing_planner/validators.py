@@ -67,18 +67,31 @@ def normalize_goal(parsed: ParsedGoal, config: PlannerConfig) -> NormalizedGoal:
 
     if parsed.shape_type == "circle":
         if radius_m is None:
-            radius_m = config.default_circle_radius_m
-            assumptions.append("circle radius was not specified; default circle radius was used")
+            if size_m is not None:
+                radius_m = size_m / 2.0
+            else:
+                radius_m = config.default_circle_radius_m
+                assumptions.append("circle radius was not specified; default circle radius was used")
+        elif size_m is not None:
+            warnings.append("circle radius and size were both specified; radius was used")
         if radius_m <= 0:
             raise PlannerValidationError("Circle radius must be positive.")
         if size_m is None:
             size_m = radius_m * 2.0
     elif parsed.shape_type in {"square", "triangle"}:
         if side_length_m is None:
-            side_length_m = config.default_shape_size_m
-            assumptions.append(
-                f"{parsed.shape_type} side_length was not specified; "
-                "default shape size was used"
+            if size_m is not None:
+                side_length_m = size_m
+            else:
+                side_length_m = config.default_shape_size_m
+                assumptions.append(
+                    f"{parsed.shape_type} side_length was not specified; "
+                    "default shape size was used"
+                )
+        elif size_m is not None:
+            warnings.append(
+                f"{parsed.shape_type} side_length and size were both specified; "
+                "side_length was used"
             )
         if side_length_m <= 0:
             raise PlannerValidationError(
