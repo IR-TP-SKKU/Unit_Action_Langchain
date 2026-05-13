@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from robot_drawing_planner.schemas import Measurement
+
 SUPPORTED_UNITS_TO_METERS = {
     "m": 1.0,
     "meter": 1.0,
@@ -19,6 +21,14 @@ SUPPORTED_UNITS_TO_METERS = {
     "millimetre": 0.001,
     "millimetres": 0.001,
 }
+
+
+def measurement_to_meters(measurement: Measurement) -> float:
+    """Convert a positive Measurement to meters."""
+
+    if measurement.value <= 0:
+        raise ValueError("Measurement value must be positive.")
+    return measurement.value * SUPPORTED_UNITS_TO_METERS[normalize_unit(measurement.unit)]
 
 
 def normalize_unit(unit: str) -> str:
@@ -43,4 +53,3 @@ def coordinate_to_meters(value: float, unit: str) -> float:
     """Convert a signed coordinate to meters."""
 
     return value * SUPPORTED_UNITS_TO_METERS[normalize_unit(unit)]
-

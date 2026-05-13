@@ -17,7 +17,7 @@ from robot_drawing_planner.schemas import (
     Point2D,
     Stroke,
 )
-from robot_drawing_planner.units import to_meters
+from robot_drawing_planner.units import measurement_to_meters
 
 SUPPORTED_LETTERS = {"A", "H", "L", "T", "O"}
 LOW_LEVEL_ROBOT_FIELDS = {
@@ -148,7 +148,7 @@ def _measurement_to_meters(measurement: Measurement | None) -> float | None:
     if measurement is None:
         return None
     try:
-        return to_meters(measurement.value, measurement.unit)
+        return measurement_to_meters(measurement)
     except ValueError as exc:
         raise PlannerValidationError(str(exc)) from exc
 
@@ -186,4 +186,3 @@ def _walk_mapping(payload: Any) -> list[tuple[str, Any]]:
         for value in payload:
             items.extend(_walk_mapping(value))
     return items
-
