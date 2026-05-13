@@ -162,10 +162,17 @@ class PlanBuilder:
             return self._record_failed_call("draw_arc requires pen_state == 'down'.")
         if radius_m <= 0:
             return self._record_failed_call("draw_arc requires radius_m > 0.")
+        if self.current_position is None:
+            return self._record_failed_call("draw_arc requires current_position is not None.")
         center = Point2D(x=center_x, y=center_y)
         if not self._arc_inside_board(center, radius_m):
             return self._record_failed_call(
                 self._arc_outside_message(center, radius_m, "draw_arc")
+            )
+        expected_start = self._arc_start_point(center, radius_m, start_angle_rad)
+        if not self._points_close(self.current_position, expected_start, tolerance=1e-6):
+            return self._record_failed_call(
+                self._arc_start_mismatch_message(self.current_position, expected_start)
             )
         stroke_id = self._next_stroke_id()
         stroke = ArcStroke(
@@ -259,6 +266,21 @@ class PlanBuilder:
     def _point3d(point: Point2D, z: float) -> dict[str, float | str]:
         return Point3D(x=point.x, y=point.y, z=z).model_dump(mode="json")
 
+    @staticmethod
+    def _arc_start_point(center: Point2D, radius_m: float, start_angle_rad: float) -> Point2D:
+        return Point2D(
+            x=center.x + radius_m * math.cos(start_angle_rad),
+            y=center.y + radius_m * math.sin(start_angle_rad),
+        )
+
+    @staticmethod
+    def _points_close(a: Point2D, b: Point2D, tolerance: float) -> bool:
+        return math.isclose(a.x, b.x, abs_tol=tolerance) and math.isclose(
+            a.y,
+            b.y,
+            abs_tol=tolerance,
+        )
+
     def _point_inside_board(self, point: Point2D) -> bool:
         x_min, x_max, y_min, y_max = self._board_bounds()
         return x_min <= point.x <= x_max and y_min <= point.y <= y_max
@@ -292,6 +314,17 @@ class PlanBuilder:
             f"x range [{center.x - radius_m}, {center.x + radius_m}] must fit in "
             f"[{x_min}, {x_max}], y range [{center.y - radius_m}, {center.y + radius_m}] "
             f"must fit in [{y_min}, {y_max}]."
+        )
+
+    @staticmethod
+    def _arc_start_mismatch_message(current: Point2D, expected_start: Point2D) -> str:
+        return (
+            "draw_arc requires current_position to match the arc start point within "
+            f"tolerance 1e-06. Current position is ({current.x}, {current.y}); "
+            f"expected arc start is ({expected_start.x}, {expected_start.y}). "
+            "Call pen_up if the pen is down, then "
+            f"move_to_start(x={expected_start.x}, y={expected_start.y}), pen_down, "
+            "then draw_arc with the same arc parameters."
         )
 
     def _next_stroke_id(self) -> str:

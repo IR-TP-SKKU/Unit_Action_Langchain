@@ -179,6 +179,35 @@ def test_draw_arc_outside_board_returns_false_without_new_stroke():
     assert any("arc bounding box is outside" in error for error in feedback["errors"])
 
 
+def test_draw_arc_wrong_start_position_returns_false_without_new_stroke():
+    toolset = UnitActionToolset()
+    invoke(toolset, "begin_plan", {"source_command": "bad arc start"})
+    invoke(toolset, "move_to_start", {"x": 0.0, "y": 0.0})
+    invoke(toolset, "pen_down")
+    assert toolset.builder is not None
+    stroke_count_before = len(toolset.builder.strokes)
+    action_count_before = len(toolset.builder.actions)
+
+    feedback = invoke(
+        toolset,
+        "draw_arc",
+        {
+            "center_x": 0.0,
+            "center_y": 0.0,
+            "radius_m": 0.05,
+            "start_angle_rad": 0.0,
+            "end_angle_rad": 1.0,
+            "direction": "ccw",
+        },
+    )
+
+    assert feedback["ok"] is False
+    assert len(toolset.builder.strokes) == stroke_count_before
+    assert len(toolset.builder.actions) == action_count_before
+    assert any("expected arc start is (0.05, 0.0)" in error for error in feedback["errors"])
+    assert any("move_to_start(x=0.05, y=0.0)" in error for error in feedback["errors"])
+
+
 def test_repaired_out_of_board_attempt_can_finish_successfully():
     toolset = UnitActionToolset()
     invoke(toolset, "begin_plan", {"source_command": "repair outside line"})

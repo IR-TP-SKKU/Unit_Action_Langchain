@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from robot_drawing_planner.config import PlannerConfig
@@ -199,6 +201,70 @@ def test_draw_arc_outside_board_fails_without_stroke_or_action():
     assert len(builder.strokes) == stroke_count_before
     assert summary["errors"] == []
     assert any("arc bounding box is outside" in error for error in summary["failed_calls"])
+
+
+def test_draw_arc_wrong_start_position_fails_without_stroke_or_action():
+    builder = PlanBuilder.begin_plan("bad arc start")
+    builder.move_to_start(0.0, 0.0)
+    builder.pen_down()
+    action_count_before = len(builder.actions)
+    stroke_count_before = len(builder.strokes)
+
+    summary = builder.draw_arc(
+        center_x=0.0,
+        center_y=0.0,
+        radius_m=0.05,
+        start_angle_rad=0.0,
+        end_angle_rad=math.pi,
+        direction="ccw",
+    )
+
+    assert len(builder.actions) == action_count_before
+    assert len(builder.strokes) == stroke_count_before
+    assert builder.current_position.x == pytest.approx(0.0)
+    assert builder.current_position.y == pytest.approx(0.0)
+    assert summary["errors"] == []
+    assert any("expected arc start is (0.05, 0.0)" in error for error in summary["failed_calls"])
+    assert any("move_to_start(x=0.05, y=0.0)" in error for error in summary["failed_calls"])
+
+
+def test_draw_arc_matching_start_position_succeeds():
+    builder = PlanBuilder.begin_plan("good arc start")
+    builder.move_to_start(0.05, 0.0)
+    builder.pen_down()
+
+    summary = builder.draw_arc(
+        center_x=0.0,
+        center_y=0.0,
+        radius_m=0.05,
+        start_angle_rad=0.0,
+        end_angle_rad=math.pi,
+        direction="ccw",
+    )
+
+    assert summary["errors"] == []
+    assert len(builder.strokes) == 1
+    assert builder.actions[-1].name == "draw_arc"
+
+
+def test_full_circle_leaves_current_position_at_original_arc_start():
+    builder = PlanBuilder.begin_plan("circle")
+    builder.move_to_start(0.05, 0.0)
+    builder.pen_down()
+
+    summary = builder.draw_arc(
+        center_x=0.0,
+        center_y=0.0,
+        radius_m=0.05,
+        start_angle_rad=0.0,
+        end_angle_rad=2.0 * math.pi,
+        direction="ccw",
+    )
+
+    assert summary["current_position"]["x"] == pytest.approx(0.05)
+    assert summary["current_position"]["y"] == pytest.approx(0.0)
+    assert builder.current_position.x == pytest.approx(0.05)
+    assert builder.current_position.y == pytest.approx(0.0)
 
 
 def test_failed_out_of_board_attempt_does_not_poison_repaired_plan():

@@ -326,6 +326,71 @@ def test_fake_llm_repairs_finish_plan_with_pen_down_after_feedback():
     )
 
 
+def test_fake_llm_repairs_invalid_arc_start_after_feedback():
+    llm = FakeToolCallingLLM(
+        [
+            [tc("begin_plan", {"source_command": "repair bad circle start"})],
+            [tc("move_to_start", {"x": 0.0, "y": 0.0})],
+            [tc("align_pen_orientation")],
+            [tc("pen_down")],
+            [
+                tc(
+                    "draw_arc",
+                    {
+                        "center_x": 0.0,
+                        "center_y": 0.0,
+                        "radius_m": 0.05,
+                        "start_angle_rad": 0.0,
+                        "end_angle_rad": 2.0 * math.pi,
+                        "direction": "ccw",
+                    },
+                )
+            ],
+            [tc("begin_plan", {"source_command": "repair bad circle start"})],
+            [tc("move_to_start", {"x": 0.05, "y": 0.0})],
+            [tc("align_pen_orientation")],
+            [tc("pen_down")],
+            [
+                tc(
+                    "draw_arc",
+                    {
+                        "center_x": 0.0,
+                        "center_y": 0.0,
+                        "radius_m": 0.05,
+                        "start_angle_rad": 0.0,
+                        "end_angle_rad": 2.0 * math.pi,
+                        "direction": "ccw",
+                    },
+                )
+            ],
+            [tc("pen_up")],
+            [tc("check_plan")],
+            [tc("finish_plan")],
+        ]
+    )
+
+    plan = plan_drawing_agentic("repair bad circle start", llm=llm)
+
+    assert plan.diagnostics["validation_ok"] is True
+    assert plan.diagnostics["errors"] == []
+    assert [action.name for action in plan.actions] == [
+        "move_to_start",
+        "align_pen_orientation",
+        "pen_down",
+        "draw_arc",
+        "pen_up",
+    ]
+    assert len(plan.strokes) == 1
+    assert plan.strokes[0].type == "arc"
+    assert any(
+        "expected arc start is (0.05, 0.0)" in message.content
+        and "move_to_start(x=0.05, y=0.0)" in message.content
+        for call_messages in llm.calls
+        for message in call_messages
+        if hasattr(message, "content")
+    )
+
+
 def test_unrepaired_finish_plan_with_pen_down_exceeds_max_steps_with_empty_actions():
     llm = FakeToolCallingLLM(
         [
