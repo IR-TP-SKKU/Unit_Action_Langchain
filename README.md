@@ -128,6 +128,53 @@ trace data exists.
 
 The plotter visualizes the planned primitive path only; it does not validate robot reachability or simulate execution.
 
+## Chatbot GUI Demo
+
+Install the package and demo dependencies:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Run the Streamlit chatbot demo:
+
+```bash
+streamlit run robot_drawing_planner/demo_app.py
+```
+
+If `OPENAI_API_KEY` is exported from `~/.zshrc`, run Streamlit through zsh so
+the key is visible to the app:
+
+```bash
+zsh -ic 'streamlit run robot_drawing_planner/demo_app.py'
+```
+
+The demo shows:
+
+- user message
+- LLM tool calls, one message per tool call
+- tool results, one message per tool result
+- final `DrawingPlan` JSON
+- final planned-path plot
+
+The demo does not show IK, FK, Jacobian control, torque, Isaac Sim execution,
+or an actual robot trajectory. It visualizes planned board-frame primitive paths
+only.
+
+Suggested demo prompts:
+
+- "중앙에 한 변 10cm짜리 네모를 그려줘"
+- "중앙에 반지름 5cm짜리 원을 그려줘"
+- "집 모양을 그려줘"
+- "웃는 얼굴을 그려줘"
+- "별 모양을 그려줘"
+
+Mode behavior:
+
+- `agentic`: uses the live ChatGPT API and Unit Action tool calls.
+- `no-api`: deterministic demo/testing only; it does not call OpenAI.
+- `template`: baseline ParsedGoal/template compiler mode.
+
 ## Open-Ended Agentic Examples
 
 Prompt/tool-call examples are stored in `examples/agentic_tool_calls/`:

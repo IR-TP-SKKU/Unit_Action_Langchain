@@ -9,6 +9,7 @@ dependencies = [
   "langchain-openai",
   "matplotlib",
   "pydantic>=2",
+  "streamlit",
 ]
 
 [project.optional-dependencies]
