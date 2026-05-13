@@ -2,7 +2,11 @@ import math
 
 from langchain_core.messages import AIMessage
 
-from robot_drawing_planner.agent_planner import plan_drawing_agentic
+from robot_drawing_planner.agent_planner import (
+    build_agent_system_prompt,
+    plan_drawing_agentic,
+)
+from robot_drawing_planner.config import PlannerConfig
 from robot_drawing_planner.planner import plan_from_goal
 from robot_drawing_planner.schemas import Measurement, ParsedGoal
 
@@ -52,6 +56,39 @@ def square_batches():
         [tc("check_plan")],
         [tc("finish_plan")],
     ]
+
+
+def test_agentic_prompt_contains_board_scale_sequence_and_arc_guidance():
+    prompt = build_agent_system_prompt(PlannerConfig())
+
+    assert "coordinates are meters" in prompt
+    assert "current board x range is [-0.25, 0.25]" in prompt
+    assert "current board y range is [-0.175, 0.175]" in prompt
+    assert "Do not use pixel-like or arbitrary coordinates such as 1, 2, 3" in prompt
+    assert "pen_up before finish_plan" in prompt
+    assert "arc start point must match current pen position" in prompt
+
+
+def test_agentic_prompt_uses_actual_configured_board_range():
+    prompt = build_agent_system_prompt(
+        PlannerConfig(board_width_m=0.4, board_height_m=0.2)
+    )
+
+    assert "current board x range is [-0.2, 0.2]" in prompt
+    assert "current board y range is [-0.1, 0.1]" in prompt
+
+
+def test_plan_drawing_agentic_sends_strengthened_prompt_to_llm():
+    llm = FakeToolCallingLLM(square_batches())
+
+    plan_drawing_agentic("draw a square", llm=llm)
+
+    prompt = llm.calls[0][0].content
+    assert "coordinates are meters" in prompt
+    assert "begin_plan first" in prompt
+    assert "move_to_start before pen_down" in prompt
+    assert "pen_up before finish_plan" in prompt
+    assert "For house/star/smiley/letters" in prompt
 
 
 def test_fake_llm_calls_tools_for_square():

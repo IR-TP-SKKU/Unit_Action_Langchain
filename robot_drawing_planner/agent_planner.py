@@ -12,19 +12,64 @@ from robot_drawing_planner.config import DEFAULT_CONFIG, PlannerConfig
 from robot_drawing_planner.llm_client import get_llm
 from robot_drawing_planner.schemas import DrawingPlan, NormalizedGoal, Point2D
 
-AGENT_SYSTEM_PROMPT = """You are a robot drawing action planner.
+
+def build_agent_system_prompt(config: PlannerConfig) -> str:
+    """Build the system prompt with the active board bounds."""
+
+    x_min, x_max, y_min, y_max = _board_ranges(config)
+    return f"""You are a robot drawing action planner.
 
 You must plan by calling the available Unit Action tools.
 You must not output a final plan directly.
 You must call tools step by step.
-You must call check_plan before finish_plan.
 Use only line and arc primitives.
-For complex shapes, approximate using lines and arcs.
+
+Board frame convention:
+- origin is board center.
+- coordinates are meters.
+- current board x range is [{_fmt(x_min)}, {_fmt(x_max)}].
+- current board y range is [{_fmt(y_min)}, {_fmt(y_max)}].
+- default board x range is [-0.25, 0.25].
+- default board y range is [-0.175, 0.175].
+
+Scale:
+- Use small drawing coordinates, usually within about 0.05 to 0.15 m.
+- Do not use pixel-like or arbitrary coordinates such as 1, 2, 3.
+- Keep every point and arc bounding box inside the board range.
+
+Required Unit Action sequence:
+- begin_plan first.
+- move_to_start before pen_down.
+- align_pen_orientation before drawing.
+- pen_down before draw_line_to or draw_arc.
+- pen_up before moving to another stroke.
+- pen_up before finish_plan.
+- check_plan before finish_plan.
+
+Arc rules:
+- Before draw_arc, the arc start point must match current pen position.
+- For a circle centered at (cx, cy) with radius r and start_angle 0, first call move_to_start(cx+r, cy), then pen_down, then draw_arc.
+
+Open-ended shapes:
+- For house/star/smiley/letters, approximate with multiple line/arc strokes inside the board.
 
 The tools append symbolic robot primitive actions only. They do not move the robot.
 Do not compute IK, FK, Jacobians, joint commands, joint velocities, trajectory
 samples, or Isaac Sim commands.
 """
+
+
+def _board_ranges(config: PlannerConfig) -> tuple[float, float, float, float]:
+    half_width = config.board_width_m / 2.0
+    half_height = config.board_height_m / 2.0
+    return -half_width, half_width, -half_height, half_height
+
+
+def _fmt(value: float) -> str:
+    return f"{value:g}"
+
+
+AGENT_SYSTEM_PROMPT = build_agent_system_prompt(DEFAULT_CONFIG)
 
 PLANNER_SCOPE_NOTE = (
     "This agentic planner outputs primitive action JSON only; it does not compute "
@@ -47,7 +92,7 @@ def plan_drawing_agentic(
     bound_model = model.bind_tools(tools) if hasattr(model, "bind_tools") else model
 
     messages: list[Any] = [
-        SystemMessage(content=AGENT_SYSTEM_PROMPT),
+        SystemMessage(content=build_agent_system_prompt(planner_config)),
         HumanMessage(content=command),
     ]
     last_finish_feedback: dict[str, Any] | None = None
