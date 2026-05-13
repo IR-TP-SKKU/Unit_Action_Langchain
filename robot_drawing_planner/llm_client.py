@@ -57,5 +57,6 @@ def parse_goal(command: str, parser: Invokable | None = None) -> ParsedGoal:
     )
     if isinstance(result, ParsedGoal):
         return result
+    if isinstance(result, dict) and "raw_command" not in result:
+        result = {**result, "raw_command": command}
     return ParsedGoal.model_validate(result)
-

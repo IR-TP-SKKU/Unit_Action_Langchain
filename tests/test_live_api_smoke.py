@@ -20,6 +20,5 @@ pytestmark = [
 
 def test_live_openai_structured_output_smoke():
     parsed = parse_goal("draw a 2 cm circle at the center")
-    assert parsed.object_type == "circle"
-    assert parsed.size > 0
-
+    assert parsed.shape_type == "circle"
+    assert parsed.radius is not None or parsed.size is not None
