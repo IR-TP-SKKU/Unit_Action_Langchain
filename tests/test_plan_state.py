@@ -1,3 +1,6 @@
+import pytest
+
+from robot_drawing_planner.config import PlannerConfig
 from robot_drawing_planner.plan_state import PlanBuilder
 from robot_drawing_planner.schemas import PrimitiveAction
 
@@ -12,8 +15,11 @@ ALLOWED_PRIMITIVES = {
 }
 
 
-def build_square_plan() -> PlanBuilder:
-    builder = PlanBuilder.begin_plan("draw a square with unit action tools")
+def build_square_plan(config: PlannerConfig | None = None) -> PlanBuilder:
+    builder = PlanBuilder.begin_plan(
+        "draw a square with unit action tools",
+        config=config,
+    )
     builder.move_to_start(-0.05, 0.05)
     builder.align_pen_orientation()
     builder.pen_down()
@@ -96,6 +102,34 @@ def test_no_action_name_outside_allowed_robot_primitives():
 
     assert all(isinstance(action, PrimitiveAction) for action in builder.actions)
     assert {action.name for action in builder.actions}.issubset(ALLOWED_PRIMITIVES)
+
+
+def test_agentic_square_action_params_include_handoff_3d_metadata():
+    config = PlannerConfig(
+        hover_height_m=0.04,
+        drawing_z_m=0.002,
+        default_speed_m_s=0.05,
+        pen_down_speed_m_s=0.012,
+        pen_up_speed_m_s=0.024,
+    )
+    builder = build_square_plan(config=config)
+
+    move, _align, pen_down, draw_line, *_middle, pen_up = builder.actions
+
+    assert move.params["target"]["z"] == pytest.approx(config.hover_height_m)
+    assert move.params["target"]["unit"] == "m"
+    assert move.params["hover_height_m"] == pytest.approx(config.hover_height_m)
+    assert move.params["note"] == (
+        "free-space move; kinematics module converts board frame to base frame"
+    )
+    assert pen_down.params["target"]["z"] == pytest.approx(config.drawing_z_m)
+    assert pen_down.params["approach_axis"] == "-z"
+    assert pen_down.params["speed_m_s"] == pytest.approx(config.pen_down_speed_m_s)
+    assert draw_line.params["start"]["z"] == pytest.approx(config.drawing_z_m)
+    assert draw_line.params["end"]["z"] == pytest.approx(config.drawing_z_m)
+    assert draw_line.params["speed_m_s"] == pytest.approx(config.default_speed_m_s)
+    assert pen_up.params["lift_height_m"] == pytest.approx(config.hover_height_m)
+    assert pen_up.params["speed_m_s"] == pytest.approx(config.pen_up_speed_m_s)
 
 
 def test_move_to_start_outside_board_fails_without_action():

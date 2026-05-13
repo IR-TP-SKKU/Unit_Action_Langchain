@@ -3,6 +3,8 @@ import math
 from langchain_core.messages import AIMessage
 
 from robot_drawing_planner.agent_planner import plan_drawing_agentic
+from robot_drawing_planner.planner import plan_from_goal
+from robot_drawing_planner.schemas import Measurement, ParsedGoal
 
 
 class FakeToolCallingLLM:
@@ -108,6 +110,77 @@ def test_fake_llm_calls_tools_for_circle():
     ]
     assert len(plan.strokes) == 1
     assert plan.strokes[0].type == "arc"
+
+
+def test_agentic_and_template_square_share_handoff_param_keys():
+    agentic_plan = plan_drawing_agentic(
+        "draw a square",
+        llm=FakeToolCallingLLM(square_batches()),
+    )
+    template_plan = plan_from_goal(
+        ParsedGoal(
+            shape_type="square",
+            side_length=Measurement(value=10, unit="cm"),
+            raw_command="draw a square",
+        )
+    )
+
+    agentic_by_name = _first_action_by_name(agentic_plan.actions)
+    template_by_name = _first_action_by_name(template_plan.actions)
+
+    for action_name in [
+        "move_to_start",
+        "align_pen_orientation",
+        "pen_down",
+        "draw_line",
+        "pen_up",
+    ]:
+        assert set(agentic_by_name[action_name].params) == set(
+            template_by_name[action_name].params
+        )
+
+
+def test_agentic_and_template_circle_share_draw_arc_handoff_param_keys():
+    agentic_plan = plan_drawing_agentic(
+        "draw a circle",
+        llm=FakeToolCallingLLM(
+            [
+                [tc("begin_plan", {"source_command": "draw circle"})],
+                [tc("move_to_start", {"x": 0.05, "y": 0.0})],
+                [tc("align_pen_orientation")],
+                [tc("pen_down")],
+                [
+                    tc(
+                        "draw_arc",
+                        {
+                            "center_x": 0.0,
+                            "center_y": 0.0,
+                            "radius_m": 0.05,
+                            "start_angle_rad": 0.0,
+                            "end_angle_rad": 2.0 * math.pi,
+                            "direction": "ccw",
+                        },
+                    )
+                ],
+                [tc("pen_up")],
+                [tc("check_plan")],
+                [tc("finish_plan")],
+            ]
+        ),
+    )
+    template_plan = plan_from_goal(
+        ParsedGoal(
+            shape_type="circle",
+            radius=Measurement(value=5, unit="cm"),
+            raw_command="draw a circle",
+        )
+    )
+
+    agentic_arc = _first_action_by_name(agentic_plan.actions)["draw_arc"]
+    template_arc = _first_action_by_name(template_plan.actions)["draw_arc"]
+
+    assert set(agentic_arc.params) == set(template_arc.params)
+    assert agentic_arc.params["center"]["z"] == template_arc.params["center"]["z"]
 
 
 def test_fake_llm_calls_tools_for_house_like_shape():
@@ -267,3 +340,10 @@ def test_agentic_output_actions_come_from_tool_calls_not_template_compiler():
     assert len(plan.strokes) == 1
     assert plan.strokes[0].start.x == -0.03
     assert plan.strokes[0].end.x == 0.07
+
+
+def _first_action_by_name(actions):
+    by_name = {}
+    for action in actions:
+        by_name.setdefault(action.name, action)
+    return by_name

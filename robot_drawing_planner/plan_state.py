@@ -12,6 +12,7 @@ from robot_drawing_planner.schemas import (
     Direction,
     LineStroke,
     Point2D,
+    Point3D,
     PrimitiveAction,
     Stroke,
 )
@@ -64,8 +65,9 @@ class PlanBuilder:
                 frame=self.frame,
                 stroke_id=None,
                 params={
-                    "target": target.model_dump(mode="json"),
-                    "note": "symbolic board-frame move only; no robot motion is computed",
+                    "target": self._point3d(target, self.config.hover_height_m),
+                    "hover_height_m": self.config.hover_height_m,
+                    "note": "free-space move; kinematics module converts board frame to base frame",
                 },
             )
         )
@@ -103,8 +105,9 @@ class PlanBuilder:
                 frame=self.frame,
                 stroke_id=None,
                 params={
-                    "target": self.current_position.model_dump(mode="json"),
-                    "note": "symbolic contact request only; no force control is computed",
+                    "target": self._point3d(self.current_position, self.config.drawing_z_m),
+                    "approach_axis": "-z",
+                    "speed_m_s": self.config.pen_down_speed_m_s,
                 },
             )
         )
@@ -130,8 +133,9 @@ class PlanBuilder:
                 frame=self.frame,
                 stroke_id=stroke_id,
                 params={
-                    "start": start.model_dump(mode="json"),
-                    "end": end.model_dump(mode="json"),
+                    "start": self._point3d(start, self.config.drawing_z_m),
+                    "end": self._point3d(end, self.config.drawing_z_m),
+                    "speed_m_s": self.config.default_speed_m_s,
                     "sampling_hint": "kinematics module should interpolate Cartesian waypoints",
                 },
             )
@@ -179,11 +183,12 @@ class PlanBuilder:
                 frame=self.frame,
                 stroke_id=stroke_id,
                 params={
-                    "center": center.model_dump(mode="json"),
+                    "center": self._point3d(center, self.config.drawing_z_m),
                     "radius_m": radius_m,
                     "start_angle_rad": start_angle_rad,
                     "end_angle_rad": end_angle_rad,
                     "direction": direction,
+                    "speed_m_s": self.config.default_speed_m_s,
                     "sampling_hint": "kinematics module should sample circular Cartesian waypoints",
                 },
             )
@@ -202,7 +207,10 @@ class PlanBuilder:
                 name="pen_up",
                 frame=self.frame,
                 stroke_id=None,
-                params={"note": "symbolic lift request only; no robot motion is computed"},
+                params={
+                    "lift_height_m": self.config.hover_height_m,
+                    "speed_m_s": self.config.pen_up_speed_m_s,
+                },
             )
         )
         return self.check_plan()
@@ -244,6 +252,10 @@ class PlanBuilder:
     def _record_failed_call(self, message: str) -> dict[str, Any]:
         self.failed_calls.append(message)
         return self.check_plan()
+
+    @staticmethod
+    def _point3d(point: Point2D, z: float) -> dict[str, float | str]:
+        return Point3D(x=point.x, y=point.y, z=z).model_dump(mode="json")
 
     def _point_inside_board(self, point: Point2D) -> bool:
         x_min, x_max, y_min, y_max = self._board_bounds()
