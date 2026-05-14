@@ -1,5 +1,9 @@
 # robot_drawing_planner
 
+<p align="center">
+  <img src="assets/Demo.png" alt="LLM Robot Drawing Planner demo" width="100%">
+</p>
+
 LangChain / LLM planner for **LLM-Assisted Robot Shape Drawing in Isaac Sim**.
 
 ## Project Scope
