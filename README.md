@@ -178,6 +178,7 @@ The demo shows:
 
 - user message
 - selectable ChatGPT/OpenAI model version and planning options
+- live per-request stopwatch and final elapsed planning time
 - LLM tool calls as they happen, one message per tool call
 - tool results as they happen, one message per tool result
 - final `DrawingPlan` JSON

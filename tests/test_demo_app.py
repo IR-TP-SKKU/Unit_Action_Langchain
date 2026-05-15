@@ -123,6 +123,35 @@ def test_scroll_to_bottom_helpers_reference_anchor(monkeypatch):
     assert "scrollIntoView" in script
 
 
+def test_stopwatch_html_runs_in_browser_and_formats_elapsed(monkeypatch):
+    module = import_demo_app_fresh(monkeypatch)
+
+    running_html = module._stopwatch_html(1234567890, running=True)
+    complete_html = module._stopwatch_html(
+        1234567890,
+        running=False,
+        elapsed_seconds=65.432,
+    )
+
+    assert "Question stopwatch" in running_html
+    assert "setInterval(update, 250)" in running_html
+    assert "one request end-to-end planner time" in running_html
+    assert "Complete" in complete_html
+    assert "setInterval(update, 250)" not in complete_html
+    assert module._format_elapsed_seconds(65.432) == "01:05.4"
+
+
+def test_demo_app_main_renders_stopwatch_and_elapsed_result(monkeypatch):
+    module = import_demo_app_fresh(monkeypatch)
+    source = inspect.getsource(module.main)
+    result_source = inspect.getsource(module._render_result_record)
+
+    assert "demo_active_started_at_ms" in source
+    assert "_render_stopwatch" in source
+    assert '"elapsed_seconds": time.perf_counter() - started_at' in source
+    assert "Elapsed planning time" in result_source
+
+
 def test_demo_app_event_key_is_stable(monkeypatch):
     module = import_demo_app_fresh(monkeypatch)
     event = make_event(

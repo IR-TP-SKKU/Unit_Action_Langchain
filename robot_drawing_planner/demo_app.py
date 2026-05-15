@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -175,6 +176,92 @@ def _scroll_chat_to_bottom() -> None:
     components.html(_scroll_chat_to_bottom_script(), height=0, width=0)
 
 
+def _format_elapsed_seconds(seconds: float) -> str:
+    """Format elapsed seconds as mm:ss.t for GUI display."""
+
+    bounded = max(0.0, float(seconds))
+    minutes = int(bounded // 60)
+    remaining = bounded - minutes * 60
+    return f"{minutes:02d}:{remaining:04.1f}"
+
+
+def _stopwatch_html(
+    started_at_epoch_ms: int,
+    running: bool,
+    elapsed_seconds: float | None = None,
+) -> str:
+    """Return a self-updating stopwatch component for one user request."""
+
+    if running:
+        elapsed_expr = f"(Date.now() - {int(started_at_epoch_ms)}) / 1000"
+        interval_script = """
+const interval = window.setInterval(update, 250);
+window.addEventListener("beforeunload", () => window.clearInterval(interval));
+"""
+        status_text = "Running"
+    else:
+        elapsed_value = 0.0 if elapsed_seconds is None else max(0.0, float(elapsed_seconds))
+        elapsed_expr = f"{elapsed_value:.6f}"
+        interval_script = ""
+        status_text = "Complete"
+
+    return f"""
+<div style="
+  border: 1px solid rgba(49, 51, 63, 0.18);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: rgba(250, 250, 250, 0.96);
+  font-family: sans-serif;
+">
+  <div style="font-size: 0.78rem; font-weight: 700; color: #555; text-transform: uppercase;">
+    Question stopwatch
+  </div>
+  <div id="demo-stopwatch-value" style="font-size: 1.8rem; font-weight: 800; line-height: 1.2;">
+    00:00.0
+  </div>
+  <div style="font-size: 0.82rem; color: #666;">
+    {status_text} · one request end-to-end planner time
+  </div>
+</div>
+<script>
+function formatElapsed(totalSeconds) {{
+  const bounded = Math.max(0, Number(totalSeconds) || 0);
+  const minutes = Math.floor(bounded / 60);
+  const seconds = bounded - minutes * 60;
+  return String(minutes).padStart(2, "0") + ":" + seconds.toFixed(1).padStart(4, "0");
+}}
+function update() {{
+  const target = document.getElementById("demo-stopwatch-value");
+  if (target) {{
+    target.textContent = formatElapsed({elapsed_expr});
+  }}
+}}
+update();
+{interval_script}
+</script>
+"""
+
+
+def _render_stopwatch(
+    placeholder: Any,
+    started_at_epoch_ms: int,
+    running: bool,
+    elapsed_seconds: float | None = None,
+) -> None:
+    """Render the per-request stopwatch in a placeholder."""
+
+    with placeholder.container():
+        components.html(
+            _stopwatch_html(
+                started_at_epoch_ms=started_at_epoch_ms,
+                running=running,
+                elapsed_seconds=elapsed_seconds,
+            ),
+            height=104,
+        )
+
+
 def main() -> None:
     """Run the Streamlit chatbot demo."""
 
@@ -251,7 +338,15 @@ def main() -> None:
 
     with plot_col:
         st.subheader("Live planned path")
+        stopwatch_placeholder = st.empty()
         plot_placeholder = st.empty()
+        active_started_at_ms = st.session_state.get("demo_active_started_at_ms")
+        if st.session_state.get("demo_active_command") and active_started_at_ms:
+            _render_stopwatch(
+                stopwatch_placeholder,
+                started_at_epoch_ms=int(active_started_at_ms),
+                running=True,
+            )
         latest_plan = st.session_state.get("demo_latest_live_plan")
         if latest_plan:
             _render_live_plot(
@@ -278,6 +373,14 @@ def main() -> None:
     with live_container:
         _render_history_record(user_record, show_raw_json=show_raw_json)
     _scroll_chat_to_bottom()
+    started_at = time.perf_counter()
+    started_at_epoch_ms = int(time.time() * 1000)
+    st.session_state["demo_active_started_at_ms"] = started_at_epoch_ms
+    _render_stopwatch(
+        stopwatch_placeholder,
+        started_at_epoch_ms=started_at_epoch_ms,
+        running=True,
+    )
     st.session_state["demo_latest_live_plan"] = None
     plot_placeholder.info("Waiting for the first planned stroke...")
 
@@ -294,6 +397,14 @@ def main() -> None:
         with live_container:
             _render_history_record(event_record, show_raw_json=show_raw_json)
         _scroll_chat_to_bottom()
+        elapsed_seconds = time.perf_counter() - started_at
+        _render_stopwatch(
+            stopwatch_placeholder,
+            started_at_epoch_ms=started_at_epoch_ms,
+            running=False,
+            elapsed_seconds=elapsed_seconds,
+        )
+        st.session_state["demo_active_started_at_ms"] = None
         return
 
     streamed_event_keys: set[tuple[int, str, str | None, str]] = set()
@@ -375,6 +486,14 @@ def main() -> None:
         with live_container:
             _render_history_record(event_record, show_raw_json=show_raw_json)
         _scroll_chat_to_bottom()
+        elapsed_seconds = time.perf_counter() - started_at
+        _render_stopwatch(
+            stopwatch_placeholder,
+            started_at_epoch_ms=started_at_epoch_ms,
+            running=False,
+            elapsed_seconds=elapsed_seconds,
+        )
+        st.session_state["demo_active_started_at_ms"] = None
         return
 
     for event in result.events:
@@ -392,8 +511,15 @@ def main() -> None:
         "plot_png_path": result.plot_png_path,
         "events_json_path": result.events_json_path,
         "plan": result.plan.model_dump(mode="json"),
+        "elapsed_seconds": time.perf_counter() - started_at,
     }
     st.session_state["demo_latest_live_plan"] = result_record["plan"]
+    _render_stopwatch(
+        stopwatch_placeholder,
+        started_at_epoch_ms=started_at_epoch_ms,
+        running=False,
+        elapsed_seconds=float(result_record["elapsed_seconds"]),
+    )
     _render_live_plot(
         plot_placeholder,
         result_record["plan"],
@@ -404,6 +530,7 @@ def main() -> None:
     with live_container:
         _render_history_record(result_record, show_raw_json=show_raw_json)
     st.session_state["demo_active_command"] = None
+    st.session_state["demo_active_started_at_ms"] = None
     _scroll_chat_to_bottom()
 
 
@@ -475,10 +602,16 @@ def _render_result_record(record: dict[str, Any], show_raw_json: bool) -> None:
     plan_json_path = record.get("plan_json_path")
     plot_png_path = record.get("plot_png_path")
     events_json_path = record.get("events_json_path")
+    elapsed_seconds = record.get("elapsed_seconds")
     plan_payload = record.get("plan") or {}
     status = classify_plan_result(plan_payload)
 
     with st.chat_message("assistant"):
+        if elapsed_seconds is not None:
+            st.info(
+                "Elapsed planning time: "
+                f"{_format_elapsed_seconds(float(elapsed_seconds))}"
+            )
         if status["validation_ok"]:
             st.success("Final planned board-frame path is ready.")
         else:
