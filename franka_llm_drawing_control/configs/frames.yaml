@@ -1,0 +1,17 @@
+# Placeholder values. Replace these after the final USD scene fixes the board
+# pose, end-effector convention, and pen mounting geometry.
+T_base_board:
+  rotation:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+  translation_m: [0.55, 0.0, 0.25]
+
+T_ee_tip:
+  rotation:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+  translation_m: [0.0, 0.0, 0.12]
+
+board_normal_base: [0.0, 0.0, 1.0]
